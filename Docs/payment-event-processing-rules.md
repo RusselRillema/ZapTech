@@ -23,6 +23,8 @@
 
 - An approval establishes the amount that can subsequently be reversed or refunded.
 
+- `ApprovedAmount` must come from `PaymentResponse.AuthAmount` in either the response to the payment request or the Real Time Transaction Query response. Do not assume that `Advice.Amount` is an approved amount.
+
 - A reversal can only be applied against an approved payment. Once the full approved value has been reversed, later refunds cannot reduce the payment further and are ignored.
 
 - Multiple refunds may be applied as long as their combined value does not exceed the remaining refundable value.
