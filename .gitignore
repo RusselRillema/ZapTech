@@ -27,8 +27,7 @@ coverage*.json
 # Local configuration and secrets
 .env
 .env.*
-!.env.example
-!.env.template
+!.env.docker.example
 **/appsettings.Local.json
 **/appsettings.*.local.json
 **/secrets.json

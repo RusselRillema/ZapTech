@@ -1,18 +1,44 @@
 services:
+  acme:
+    build:
+      context: .
+      dockerfile: Source/AcmePay.Stub/Dockerfile
+    environment:
+      ASPNETCORE_URLS: ${ASPNETCORE_URLS:-http://+:8080}
+      # The running service validates its settings; unrelated services need none.
+      ACME_API_KEY: ${ACME_API_KEY:-}
+      ACME_MERCHANT_ID: ${ACME_MERCHANT_ID:-}
+      ACME_ADVICE_URL: ${ACME_ADVICE_URL:-}
+      ACME_ADVICE_USERNAME: ${ACME_ADVICE_USERNAME:-}
+      ACME_ADVICE_PASSWORD: ${ACME_ADVICE_PASSWORD:-}
+      ACME_STATUS_WEBHOOK_URL: ${ACME_STATUS_WEBHOOK_URL:-}
+      ACME_WEBHOOK_SECRET: ${ACME_WEBHOOK_SECRET:-}
+      ACME_ENABLE_CONTROLS: ${ACME_ENABLE_CONTROLS:-false}
+    ports:
+      - "127.0.0.1:${ACME_HTTP_PORT:-5081}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 30s
+
   db:
     image: postgres:18
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-payment_integration}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local environment file}
-      PAYMENT_DB_USER: ${PAYMENT_DB_USER:-payment_integration_app}
-      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in your local environment file}
+      POSTGRES_DB: postgres
+      # The official image rejects an empty admin password when db starts.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - type: volume
         source: paymentintegration_data
         target: /var/lib/postgresql
+      - type: bind
+        source: ./Source/PaymentIntegration/Database
+        target: /opt/paymentintegration/database
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ./Source/PaymentIntegration/Database/init
         target: /docker-entrypoint-initdb.d
@@ -22,10 +48,11 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
+        # Fixed development credentials from Database/setup.sql.
         - >-
-          PGPASSWORD="$${PAYMENT_DB_PASSWORD}" PGCONNECT_TIMEOUT=3
+          PGPASSWORD=payment_integration_dev_only PGCONNECT_TIMEOUT=3
           psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432
-          --username="$${PAYMENT_DB_USER}" --dbname="$${POSTGRES_DB}"
+          --username=payment_integration_app --dbname=payment_integration
           --set=ON_ERROR_STOP=1 --tuples-only --no-align
           --command='SELECT 1' >/dev/null
       interval: 10s
