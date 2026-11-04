@@ -19,7 +19,9 @@ internal static class PaymentAdviceValidation
         var transactionId = Required(payload, "TransactionID", 50);
         Required(payload, "RetrievalReferenceNumber", 12);
         Required(payload, "SystemsTraceAuditNumber", 6);
-        Required(payload, "PaymentService");
+        if (Required(payload, "PaymentService") is not ("CardNotPresent" or "CardNotPresentRecurring"
+            or "AcmeEft" or "GooglePay" or "ApplePay"))
+            throw Invalid("PaymentService is invalid.");
         if (Required(payload, "TransactionStatus") is not ("Success" or "Failure" or "Other"))
             throw Invalid("TransactionStatus is invalid.");
         Required(payload, "ResponseSource", 50);

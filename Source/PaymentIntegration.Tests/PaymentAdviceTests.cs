@@ -222,6 +222,7 @@ public sealed class PaymentAdviceTests
 
     [Theory]
     [InlineData("MerchantID", "another-account")]
+    [InlineData("PaymentService", "invalid-service")]
     [InlineData("TransactionStatus", "invalid-status")]
     [InlineData("Amount", "1999")]
     [InlineData("ResponseCode", null)]
@@ -295,8 +296,32 @@ public sealed class PaymentAdviceTests
             flow.Repository.VerifyNoOtherCalls();
         });
 
-    [Fact]
-    public Task Valid_credentials_reach_the_real_service_and_only_acknowledge_after_commit() =>
+    [Theory]
+    [InlineData("invalid-service")]
+    [InlineData("cardnotpresent")]
+    [InlineData(" CardNotPresent ")]
+    public Task Invalid_payment_service_returns_400_without_database_processing(string paymentService) =>
+        WithApi(async (client, flow) =>
+        {
+            var fields = AdviceFields();
+            fields["PaymentService"] = paymentService;
+            using var request = Request(JsonSerializer.SerializeToElement(fields));
+
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("invalid_payment_advice", body.RootElement.GetProperty("title").GetString());
+            flow.Repository.VerifyNoOtherCalls();
+        });
+
+    [Theory]
+    [InlineData("CardNotPresent")]
+    [InlineData("CardNotPresentRecurring")]
+    [InlineData("AcmeEft")]
+    [InlineData("GooglePay")]
+    [InlineData("ApplePay")]
+    public Task Valid_payment_services_reach_the_real_service_and_only_acknowledge_after_commit(string paymentService) =>
         WithApi(async (client, flow) =>
         {
             var committing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -307,7 +332,9 @@ public sealed class PaymentAdviceTests
                     committing.SetResult();
                     await releaseCommit.Task;
                 });
-            using var request = Request(Advice());
+            var fields = AdviceFields();
+            fields["PaymentService"] = paymentService;
+            using var request = Request(JsonSerializer.SerializeToElement(fields));
             var pending = client.SendAsync(request);
             try
             {
