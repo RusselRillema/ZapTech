@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Xunit;
 
-namespace PaymentIntegration.Tests;
+namespace AcmePay.Stub.Tests;
 
 public sealed class AcmeStubTests
 {

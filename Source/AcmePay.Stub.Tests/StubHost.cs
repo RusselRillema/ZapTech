@@ -11,7 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace PaymentIntegration.Tests;
+namespace AcmePay.Stub.Tests;
 
 internal sealed record CapturedCallback(string Path, byte[] Body, string Authorization, string Signature);
 
