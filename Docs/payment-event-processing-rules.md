@@ -19,17 +19,13 @@
 
 - Ignored events should include a short comment explaining why they were ignored, e.g., "Refund is greater than the current payment value."
 
+- A refund larger than the approved payment amount is therefore ignored.
+
 - An approval establishes the amount that can subsequently be reversed or refunded.
 
 - A reversal can only be applied against an approved payment. Once the full approved value has been reversed, later refunds cannot reduce the payment further and are ignored.
 
-- A refund can only be applied against an approved value that has not already been refunded or reversed.
-
 - Multiple refunds may be applied as long as their combined value does not exceed the remaining refundable value.
-
-- A refund that would exceed the remaining refundable value is ignored in full. The system must not partially apply an event or invent a different amount from the one reported by Acme.
-
-- A refund larger than the approved payment amount is therefore ignored.
 
 - The payment record represents the current interpreted state of the payment. Payment events remain the audit history showing how that state was reached.
 
