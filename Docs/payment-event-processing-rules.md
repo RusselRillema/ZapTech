@@ -2,7 +2,11 @@
 
 - A payment is stored before the request is sent to Acme.
 
+- All monetary values in the database are stored in the currency's lowest monetary unit, e.g., cents for ZAR: R19.99 is stored as 1999.
+
 - Every meaningful response or notification received from Acme is stored as a payment event, even if it cannot currently be applied.
+
+- All notifications for a specific payment must use the payment's currency. A notification in a different currency is stored as a payment event and marked **Ignored**; it must not change the payment's state or value.
 
 - Events may arrive more than once or out of order. Arrival order must not determine the payment's final state.
 
@@ -13,7 +17,7 @@
 
 - Whenever an event is applied, any pending events for that payment should be reconsidered because they may now be applicable.
 
-- Ignored events should include a short comment explaining why they were ignored.
+- Ignored events should include a short comment explaining why they were ignored, e.g., "Refund is greater than the current payment value."
 
 - An approval establishes the amount that can subsequently be reversed or refunded.
 
