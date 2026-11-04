@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-payment_integration}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local environment file}
+      PAYMENT_DB_USER: ${PAYMENT_DB_USER:-payment_integration_app}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in your local environment file}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - type: volume
+        source: paymentintegration_data
+        target: /var/lib/postgresql
+      - type: bind
+        source: ./Source/PaymentIntegration/Database/init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${PAYMENT_DB_PASSWORD}" PGCONNECT_TIMEOUT=3
+          psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432
+          --username="$${PAYMENT_DB_USER}" --dbname="$${POSTGRES_DB}"
+          --set=ON_ERROR_STOP=1 --tuples-only --no-align
+          --command='SELECT 1' >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: "no"
+    stop_grace_period: 30s
+
+volumes:
+  paymentintegration_data:
