@@ -1,0 +1,38 @@
+# Source control and local IDE files
+.git
+.vs
+.idea
+**/*.suo
+**/*.user
+**/*.rsuser
+
+# Build, test and diagnostic outputs
+**/[Bb]in
+**/[Oo]bj
+**/[Aa]rtifacts
+**/[Tt]est[Rr]esults
+**/coverage
+**/*.nupkg
+**/*.snupkg
+**/*.trx
+**/*.coverage
+**/*.coveragexml
+**/coverage*.xml
+**/coverage*.json
+**/*.log
+
+# Local configuration and secrets
+**/.env
+**/.env.*
+**/appsettings.Local.json
+**/appsettings.*.local.json
+**/secrets.json
+**/.secrets
+**/*.pfx
+**/*.p12
+**/*.pem
+**/*.key
+
+# Operating system files
+**/.DS_Store
+**/Thumbs.db
