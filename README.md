@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 PaymentIntegration host, Acme Pay stub and PostgreSQL 18 bootstrap with seeded customer, sub-merchant and card tables for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Payment processing, payment lifecycle tables, procedures and reporting remain unfinished.
+.NET 8 payment submission service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Payment status queries, callbacks, reconciliation and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -16,11 +16,11 @@ Run commands from the repository root. Native database deployment uses your exis
 
 Install missing software using the official [PostgreSQL](https://www.postgresql.org/download/), [.NET](https://dotnet.microsoft.com/download/dotnet/8.0) or [Docker](https://docs.docker.com/get-started/get-docker/) instructions. Container startup needs no host PostgreSQL or .NET installation.
 
-For Acme, copy [env.local.example](env.local.example) (native) or [.env.docker.example](.env.docker.example) (containers) to root `.env` using your editor/file manager. Preserve customised files; replace example Acme credentials and callback URLs. For Docker's database, also set `POSTGRES_PASSWORD`; `POSTGRES_USER` defaults to `postgres` and `POSTGRES_PORT` to `5432`.
+Copy [env.local.example](env.local.example) (native) or [.env.docker.example](.env.docker.example) (containers) to root `.env` using your editor/file manager. Preserve customised files; replace example Acme credentials and callback URLs. PaymentIntegration also needs `ACME_BASE_URL` and `PAYMENT_DATABASE_CONNECTION_STRING`. For Docker's database, set `POSTGRES_PASSWORD`; `POSTGRES_USER` defaults to `postgres` and `POSTGRES_PORT` to `5432`.
 
 Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
 
-PaymentIntegration currently exposes only [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) and needs no database, Acme service or credentials. Its native command explicitly selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs Acme and the database.
+PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs only Acme and the database; run PaymentIntegration natively with the native environment settings.
 
 ## Database setup and removal
 
@@ -30,7 +30,9 @@ Using your existing privileged `psql` connection, outside a transaction, run:
 \i Source/PaymentIntegration/Database/setup.sql
 ```
 
-The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It includes separate table and seed scripts, loading five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
+The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It creates catalogue, payment and event tables plus payment procedures, and seeds five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
+
+An existing database must already have the current payment/event table schema. Deploy `Source/PaymentIntegration/Database/003_PaymentProcedures.sql` as the object owner with `psql --single-transaction --file=Source/PaymentIntegration/Database/003_PaymentProcedures.sql`, using your existing administrator connection settings. Restarting Compose does not deploy changes to existing volumes.
 
 For removal, stop application connections first, then explicitly run:
 
@@ -52,6 +54,23 @@ docker compose logs --tail=100 db acme
 For one service, use `docker compose up -d db` or `docker compose up --build -d acme`; each can start without the other's credentials. Database access defaults to `127.0.0.1:5432` on the host and `db:5432` inside Compose. Docker's initializer runs the same setup SQL after creating the server. Its authenticated health check runs inside the database container and reads no application tables.
 
 Stop/remove containers with `docker compose down`; the database volume persists. **`docker compose down --volumes` deletes the project database volume.** Initialization runs only on empty storage. A failed setup may leave partial initialization: inspect logs and repair as administrator, or explicitly remove a disposable volume. Restart does not resume setup. Existing databases require explicit future schema deployment; these scripts are not migrations.
+
+## Submit a payment
+
+Send JSON to `POST http://127.0.0.1:5080/payments`:
+
+```json
+{
+  "appPaymentId": "app-payment-001",
+  "customerId": "860e4537-28e4-4b83-a399-d4bd13f63a26",
+  "customerCardId": "8ee3f008-84f5-4152-80a5-21821abdd045",
+  "subMerchantId": "ZAP9193145856",
+  "amount": 1999,
+  "currencyCode": "ZAR"
+}
+```
+
+Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409/429 responses mean Failed; timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Status queries and reconciliation are deferred.
 
 ## Acme operation
 
@@ -78,4 +97,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-Docker startup, initial table creation and sample seeding were verified on Linux. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.
+The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. The new procedures, their privileges and database locking have not been verified against PostgreSQL. Full end-to-end testing belongs to step 6. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.

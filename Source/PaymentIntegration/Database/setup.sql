@@ -41,7 +41,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE :"deployment_owner"
 -- These scripts share this transaction; neither starts or commits its own.
 \ir 001_CreateTables.sql
 \ir 002_SeedSampleData.sql
+\ir 003_PaymentProcedures.sql
 
--- Add future procedures before the execution grant.
 GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO payment_integration_app;
 COMMIT;

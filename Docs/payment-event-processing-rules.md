@@ -2,6 +2,17 @@
 
 - A payment is stored before the request is sent to Acme.
 
+## Payment State
+
+- **Approved** — the acquirer approved the payment.
+- **Declined** — the acquirer explicitly declined the payment. Acme's `TransactionStatus=Success` does not override a decline response code such as `05` or `51`.
+- **Failed** — Acme explicitly rejected the request: HTTP `400`, `401`, `409` or `429`.
+- **Unresolved** — the outcome is not yet known, including before an Acme outcome is received, timeouts, connection failures and HTTP `500`–`504`.
+
+- A repeated `AppPaymentId` with identical payment details returns the existing local payment without creating or submitting another payment. Reusing that identifier with different details returns HTTP `409`.
+
+## Payment Events and Amounts
+
 - All monetary values in the database are stored in the currency's lowest monetary unit, e.g., cents for ZAR: R19.99 is stored as 1999.
 
 - Every meaningful response or notification received from Acme is stored as a payment event, even if it cannot currently be applied.
