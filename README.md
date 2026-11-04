@@ -78,7 +78,7 @@ Payment Advice is received at `POST /notifications/payment-advice`, matching the
 
 ## Acme operation
 
-Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions and queued callbacks.
+Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions, scenario configuration and callbacks.
 
 Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. PaymentIntegration receives Payment Advice; the Transaction Status receiver remains deferred.
 
@@ -87,7 +87,25 @@ Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
 - `POST /api/payment`
 - `GET /apirttq/query/Merchant/{MerchantID}?TransactionID={id}` (or `OrderNumber={reference}`)
 
-With `ACME_ENABLE_CONTROLS=true`, bearer-protected `POST /__stub/transactions/{id}/reversal` and `POST /__stub/transactions/{id}/refund` send full-amount status callbacks using a body such as `{"Amount":1999}`. Payment Advice uses Basic authentication; status callbacks use Base64 HMAC-SHA256 over the exact body bytes in `x-signature`. Valid payments are approved; partial events are unsupported.
+Payment Advice uses Basic authentication; status callbacks use Base64 HMAC-SHA256 over the exact body bytes in `x-signature`. Valid payments are approved by default; partial events are unsupported.
+
+With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same bearer key. Use a dedicated stub instance and run scenarios sequentially: `POST /__stub/scenario` replaces defaults for all newly accepted payments, while each existing transaction retains its outcome and callback settings. `GET /__stub/scenario` shows the current defaults.
+
+```json
+{"paymentOutcome":"Declined","responseDelaySeconds":0,"holdCallbacks":false}
+```
+
+`paymentOutcome` is `Approved` (default) or `Declined` (acquirer code `05`, HTTP 200). `responseDelaySeconds` is 0–60 (default 0); `holdCallbacks` defaults to false. Send `{}` to restore defaults. Invalid updates return 400 without changing configuration.
+
+| Control | Behaviour |
+| --- | --- |
+| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate a full-amount event using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. |
+| `GET /__stub/transactions/{id}/callbacks` | List generated callback `identifier`, `kind` and `isHeld`; reading does not send anything. |
+| `POST /__stub/transactions/{id}/callbacks/{identifier}/send` | Queue a held callback or replay one using its original bytes and identity; returns 202, or 503 if the queue is full. |
+
+`isHeld` means manual release is still required; callback acknowledgements appear in the stub logs.
+
+For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again. The demo runner and service reversal/refund handling remain unfinished.
 
 ## Tests and verification
 
@@ -101,4 +119,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. The new procedures, their privileges and database locking have not been verified against PostgreSQL. Full end-to-end testing belongs to step 6. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.
+The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. The new procedures, their privileges and database locking have not been verified against PostgreSQL. Full end-to-end testing belongs to step 6. See [SOLUTION.md](SOLUTION.md) for design and verification limits.

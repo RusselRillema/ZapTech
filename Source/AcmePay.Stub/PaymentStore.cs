@@ -3,27 +3,38 @@ using System.Text.Json;
 
 namespace AcmePay.Stub;
 
-public sealed class PaymentStore(StubSettings settings, TimeProvider clock, CallbackDispatcher callbacks)
+public sealed class PaymentStore(
+    StubSettings settings, TimeProvider clock, CallbackDispatcher callbacks, DemoScenarioState scenarios)
 {
-    private sealed class Payment(PaymentResponse response, DateTimeOffset acceptedAt, string currency)
+    private sealed class StoredCallback(CallbackDelivery delivery, bool isHeld)
+    {
+        public CallbackDelivery Delivery { get; } = delivery;
+        public bool IsHeld { get; set; } = isHeld;
+    }
+
+    private sealed class Payment(PaymentResponse response, DateTimeOffset acceptedAt, string currency, bool holdCallbacks)
     {
         public PaymentResponse Original { get; } = response;
         public PaymentResponse Current { get; set; } = response;
         public DateTimeOffset AcceptedAt { get; } = acceptedAt;
         public string Currency { get; } = currency;
+        public bool HoldCallbacks { get; } = holdCallbacks;
+        public List<StoredCallback> Callbacks { get; } = [];
     }
 
     private readonly object _gate = new();
     private readonly Dictionary<string, Payment> _transactions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Payment> _rrns = new(StringComparer.Ordinal);
 
-    public IResult Submit(PaymentEnvelope envelope)
+    public async Task<IResult> SubmitAsync(PaymentEnvelope envelope, CancellationToken cancellationToken)
     {
         var request = envelope.PaymentRequest!;
         var channel = envelope.MessageHeader!.Channel!;
         var transactionId = request.TransactionID!;
         var orderNumber = request.OrderNumber!;
         var now = clock.GetUtcNow();
+        IResult result;
+        TimeSpan responseDelay;
         lock (_gate)
         {
             if (_transactions.TryGetValue(transactionId, out var previous)
@@ -35,29 +46,44 @@ public sealed class PaymentStore(StubSettings settings, TimeProvider clock, Call
                 return Wire.Error(409, "E09", "Retrieval Reference Number already in use", clock,
                     owner.Original.TransactionID, orderNumber, channel);
 
-            var response = new PaymentResponse(transactionId, orderNumber, "Success",
-                new ResponseDetail("Acquirer", "00", "Approved or completed successfully", "Approved."))
+            // Capture one immutable scenario after replay checks; later configuration changes
+            // affect new transactions, never an already accepted payment or its callbacks.
+            var scenario = scenarios.Current;
+            var approved = scenario.PaymentOutcome == "Approved";
+            var detail = approved
+                ? new ResponseDetail("Acquirer", "00", "Approved or completed successfully", "Approved.")
+                : new ResponseDetail("Acquirer", "05", "Do not honour", "Your bank declined this payment.");
+            var response = new PaymentResponse(transactionId, orderNumber, "Success", detail)
             {
                 TransactionDateTime = Wire.Timestamp(now),
                 ReconID = Guid.NewGuid().ToString("N"),
                 RetrievalReferenceNumber = rrn,
-                AuthCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(),
-                AuthAmount = request.Amount
+                AuthCode = approved ? RandomNumberGenerator.GetInt32(100000, 1000000).ToString() : null,
+                AuthAmount = approved ? request.Amount : null
             };
             var currency = request.CurrencyCode ?? "ZAR";
             var advice = new PaymentAdvice("Payment", settings.MerchantId.ToString(), transactionId,
                 response.TransactionDateTime, orderNumber, response.ReconID, rrn,
                 RandomNumberGenerator.GetInt32(0, 1000000).ToString("D6"), request.Amount!.Value,
-                currency, request.PaymentService!, "Success", "Acquirer", "00", "Approved", response.AuthCode);
-            if (!callbacks.TryEnqueue(new(JsonSerializer.SerializeToUtf8Bytes(advice, Wire.Json), true, transactionId)))
+                currency, request.PaymentService!, "Success", "Acquirer", detail.Code, detail.Description, response.AuthCode);
+            var delivery = new CallbackDelivery(JsonSerializer.SerializeToUtf8Bytes(advice, Wire.Json), true, transactionId);
+            if (!scenario.HoldCallbacks && !callbacks.TryEnqueue(delivery))
                 return Wire.Error(503, "E50", "The gateway is degraded.", clock, transactionId, orderNumber, channel);
 
             // Retain no card token or email in the transaction store or callback payload.
-            var payment = new Payment(response, now, currency);
+            var payment = new Payment(response, now, currency, scenario.HoldCallbacks);
+            payment.Callbacks.Add(new(delivery, scenario.HoldCallbacks));
             _transactions[transactionId] = payment;
             _rrns.Add(rrn, payment);
-            return Wire.Result(response, clock, channel);
+            result = Wire.Result(response, clock, channel);
+            responseDelay = TimeSpan.FromSeconds(scenario.ResponseDelaySeconds);
         }
+
+        // Simulate an accepted payment whose reply is slow/lost. Keep its outcome and
+        // callbacks even if the caller times out; RTTQ and controls remain available.
+        if (responseDelay > TimeSpan.Zero)
+            await Task.Delay(responseDelay, clock, cancellationToken);
+        return result;
     }
 
     public IResult Query(string merchantId, string? transactionId, string? orderNumber)
@@ -85,7 +111,7 @@ public sealed class PaymentStore(StubSettings settings, TimeProvider clock, Call
         {
             if (!_transactions.TryGetValue(transactionId, out var payment))
                 return Results.NotFound();
-            if (payment.Current.TransactionStatus != "Success")
+            if (payment.Current.TransactionStatus != "Success" || payment.Current.ResponseDetail.Code != "00")
                 return Results.Conflict(new { error = "This happy-path trigger requires an approved payment." });
             if (amount != payment.Original.AuthAmount)
             {
@@ -95,11 +121,48 @@ public sealed class PaymentStore(StubSettings settings, TimeProvider clock, Call
 
             var status = new StatusEvent(Guid.NewGuid().ToString(), type, Wire.Timestamp(clock.GetUtcNow()),
                 payment.Original.RetrievalReferenceNumber!, amount, payment.Currency, "00", true);
-            if (!callbacks.TryEnqueue(new(JsonSerializer.SerializeToUtf8Bytes(status, Wire.Json), false, status.TransactionUUID)))
+            var delivery = new CallbackDelivery(JsonSerializer.SerializeToUtf8Bytes(status, Wire.Json), false, status.TransactionUUID);
+            if (!payment.HoldCallbacks && !callbacks.TryEnqueue(delivery))
                 return Results.StatusCode(503);
 
+            payment.Callbacks.Add(new(delivery, payment.HoldCallbacks));
             payment.Current = payment.Current with { TransactionStatus = type == "Reversal" ? "Reversed" : "Refunded" };
             return Results.Accepted(value: new { transactionUUID = status.TransactionUUID, rrn = status.Rrn });
+        }
+    }
+
+    public IResult GetCallbacks(string transactionId)
+    {
+        lock (_gate)
+        {
+            if (!_transactions.TryGetValue(transactionId, out var payment))
+                return Results.NotFound();
+
+            return Results.Ok(payment.Callbacks.Select(callback => new
+            {
+                identifier = callback.Delivery.Identifier,
+                kind = callback.Delivery.IsAdvice ? "PaymentAdvice" : "TransactionStatus",
+                isHeld = callback.IsHeld
+            }).ToArray());
+        }
+    }
+
+    public IResult SendCallback(string transactionId, string identifier)
+    {
+        lock (_gate)
+        {
+            if (!_transactions.TryGetValue(transactionId, out var payment))
+                return Results.NotFound();
+            var callback = payment.Callbacks.Find(item => item.Delivery.Identifier == identifier);
+            if (callback is null)
+                return Results.NotFound();
+            if (!callbacks.TryEnqueue(callback.Delivery))
+                return Results.StatusCode(503);
+
+            // The same control releases held deliveries or deliberately replays them.
+            // Enqueuing a replay never applies the reversal/refund again.
+            callback.IsHeld = false;
+            return Results.Accepted(value: new { identifier });
         }
     }
 }
