@@ -5,7 +5,8 @@ namespace PaymentIntegration.Payments;
 public sealed class PaymentResponseProcessor
 {
     public (Payment Payment, PaymentEvent Event) Process(Payment payment, PaymentEvent receipt,
-        DateTimeOffset processedAt)
+        DateTimeOffset processedAt,
+        bool retryingRateLimit = false)
     {
         if (receipt.Source != "PaymentResponse")
         {
@@ -22,6 +23,12 @@ public sealed class PaymentResponseProcessor
             {
                 return Ignore(payment, receipt, processedAt,
                     "Acme rejection cannot replace an established payment outcome.");
+            }
+
+            if (retryingRateLimit && IsRateLimited(receipt))
+            {
+                return LeavePending(payment, receipt,
+                    "Acme rate limited this attempt; awaiting a retry outcome.");
             }
 
             return Apply(
@@ -154,4 +161,15 @@ public sealed class PaymentResponseProcessor
     private string? Text(JsonElement value, string name) =>
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString() : null;
+
+    private bool IsRateLimited(PaymentEvent receipt)
+    {
+        return receipt.HttpStatusCode == 429
+            && receipt.Payload is { ValueKind: JsonValueKind.Object } body
+            && body.TryGetProperty("PaymentResponse", out var response)
+            && response.ValueKind == JsonValueKind.Object
+            && response.TryGetProperty("ResponseDetail", out var detail)
+            && detail.ValueKind == JsonValueKind.Object
+            && Text(detail, "Code") == "E29";
+    }
 }

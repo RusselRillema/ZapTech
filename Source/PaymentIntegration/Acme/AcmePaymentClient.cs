@@ -29,7 +29,7 @@ public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settin
             };
             message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
             logger.LogInformation("Submitting payment {PaymentId} to Acme", paymentId);
-            // No automatic retry: an interrupted request may already have reached the acquirer.
+            // The service owns E29 retries so every response is audited before waiting.
             using var response = await httpClient.SendAsync(message, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             JsonElement? payload = null;
@@ -48,7 +48,8 @@ public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settin
             }
             logger.LogInformation("Acme returned HTTP {HttpStatusCode} for payment {PaymentId}",
                 (int)response.StatusCode, paymentId);
-            return new((short)response.StatusCode, payload);
+            var retryDelay = GetRetryDelay(response, payload, paymentId);
+            return new((short)response.StatusCode, payload, RetryDelay: retryDelay);
         }
         catch (OperationCanceledException exception)
         {
@@ -61,5 +62,42 @@ public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settin
             logger.LogError(exception, "Acme operation {Operation} failed for payment {PaymentId}", "submit", paymentId);
             return new(null, null, "Acme connection failed; outcome unknown.");
         }
+    }
+
+    private TimeSpan? GetRetryDelay(
+        HttpResponseMessage response,
+        JsonElement? payload,
+        string paymentId)
+    {
+        if ((int)response.StatusCode != 429
+            || payload is not { ValueKind: JsonValueKind.Object } body
+            || !body.TryGetProperty("PaymentResponse", out var paymentResponse)
+            || paymentResponse.ValueKind != JsonValueKind.Object
+            || !paymentResponse.TryGetProperty("ResponseDetail", out var detail)
+            || detail.ValueKind != JsonValueKind.Object
+            || !detail.TryGetProperty("Code", out var code)
+            || code.ValueKind != JsonValueKind.String
+            || code.GetString() != "E29")
+        {
+            return null;
+        }
+
+        var retryAfter = response.Headers.RetryAfter?.Delta;
+
+        if (retryAfter is null
+            || retryAfter.Value < TimeSpan.Zero
+            || retryAfter.Value.Ticks > TimeSpan.MaxValue.Ticks / 2)
+        {
+            logger.LogWarning(
+                "Acme E29 has no usable Retry-After seconds for payment {PaymentId}",
+                paymentId);
+            return null;
+        }
+
+        var bufferedTicks = Math.Max(
+            TimeSpan.FromSeconds(3).Ticks,
+            retryAfter.Value.Ticks * 2);
+
+        return TimeSpan.FromTicks(bufferedTicks);
     }
 }

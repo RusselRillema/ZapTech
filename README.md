@@ -68,7 +68,7 @@ Send JSON to `POST http://127.0.0.1:5080/payments`:
 }
 ```
 
-Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409/429 responses mean Failed; timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Status queries and reconciliation are deferred.
+Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window. Timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Status queries and reconciliation are deferred.
 
 ## Acme operation
 

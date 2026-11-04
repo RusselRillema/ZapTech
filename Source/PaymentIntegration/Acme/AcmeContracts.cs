@@ -9,7 +9,11 @@ public sealed record AcmePaymentRequest(string MerchantID, string TransactionID,
     string CardOnFileScenario, string SubMerchantID, string MerchantCategoryCode,
     string CardAcceptorName, string Email);
 public sealed record AcmeEnvelope(AcmeHeader MessageHeader, AcmePaymentRequest PaymentRequest);
-public sealed record AcmeReply(short? HttpStatusCode, JsonElement? Payload, string? Failure = null);
+public sealed record AcmeReply(
+    short? HttpStatusCode,
+    JsonElement? Payload,
+    string? Failure = null,
+    TimeSpan? RetryDelay = null);
 
 public interface IAcmePaymentClient
 {

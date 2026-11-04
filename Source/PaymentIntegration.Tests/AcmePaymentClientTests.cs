@@ -97,6 +97,83 @@ public sealed class AcmePaymentClientTests
         Assert.Contains("capacity", result.Failure);
     }
 
+    [Theory]
+    [InlineData("0", 3)]
+    [InlineData("1", 3)]
+    [InlineData("2", 4)]
+    [InlineData("3", 6)]
+    public async Task E29_exposes_twice_the_Retry_After_with_a_three_second_minimum(string retryAfter, int expectedSeconds)
+    {
+        var calls = 0;
+        using var handler = new Handler(_ =>
+        {
+            calls++;
+            var response = RateLimitedResponse();
+            response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        using var limiter = Limiter();
+
+        var result = await Client(http, limiter).SubmitAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), result.RetryDelay);
+        Assert.Equal(1, calls);
+        Assert.Equal((short)429, result.HttpStatusCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("invalid")]
+    [InlineData("-1")]
+    [InlineData("600000000000")]
+    public async Task E29_without_usable_Retry_After_does_not_invent_a_delay(string? retryAfter)
+    {
+        using var handler = new Handler(_ =>
+        {
+            var response = RateLimitedResponse();
+
+            if (retryAfter is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            }
+
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        using var limiter = Limiter();
+
+        var result = await Client(http, limiter).SubmitAsync(Request(), CancellationToken.None);
+
+        Assert.Null(result.RetryDelay);
+        Assert.Equal((short)429, result.HttpStatusCode);
+    }
+
+    [Fact]
+    public async Task A_Retry_After_header_on_another_error_is_not_an_E29_retry()
+    {
+        using var handler = new Handler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""{"PaymentResponse":{"ResponseDetail":{"Code":"E50"}}}""")
+            };
+            response.Headers.TryAddWithoutValidation("Retry-After", "1");
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        using var limiter = Limiter();
+
+        var result = await Client(http, limiter).SubmitAsync(Request(), CancellationToken.None);
+
+        Assert.Null(result.RetryDelay);
+    }
+
+    private static HttpResponseMessage RateLimitedResponse() => new(HttpStatusCode.TooManyRequests)
+    {
+        Content = new StringContent("""{"PaymentResponse":{"ResponseDetail":{"Source":"Application","Code":"E29"}}}""")
+    };
+
     private static ConcurrencyLimiter Limiter() => new(new() { PermitLimit = 1, QueueLimit = 0 });
     private static AcmePaymentClient Client(HttpClient http, ConcurrencyLimiter limiter, ILogger<AcmePaymentClient>? logger = null) =>
         new(http, new(new Uri("http://localhost:5081"), "merchant", "sensitive-api-key"), limiter,

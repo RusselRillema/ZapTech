@@ -57,53 +57,90 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
         using var scope = logger.BeginScope(new Dictionary<string, object> { ["PaymentId"] = payment.PaymentId });
         logger.LogInformation("Created payment {PaymentId} for app payment {AppPaymentId}", payment.PaymentId, payment.AppPaymentId);
 
-        // Once persisted, finish the bounded submission/audit flow even if the caller disconnects.
-        using var processingTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        // Once persisted, finish the bounded submission flow even if the caller disconnects.
+        var processingWindow = TimeSpan.FromSeconds(60);
+        var startedAt = clock.GetTimestamp();
+        using var processingTimeout = new CancellationTokenSource(processingWindow, clock);
         var token = processingTimeout.Token;
-        var eventId = Guid.NewGuid();
+        var eventId = Guid.Empty;
         var operation = "Acme submission";
         try
         {
-            var response = await acme.SubmitAsync(envelope, token);
-            var receipt = new PaymentEvent(eventId, payment.PaymentId, "PaymentResponse", response.Payload,
-                response.HttpStatusCode, clock.GetUtcNow(), ProcessingComment: response.Failure);
-
-            operation = "payment event transaction";
-            await using var session = await repository.BeginProcessingAsync(payment.PaymentId, eventId, token);
-            payment = session.Payment;
-            await session.InsertEventAsync(receipt, token);
-            var pending = (await session.GetPendingEventsAsync(token)).ToArray();
-            bool applied;
-            do
+            while (true)
             {
-                applied = false;
-                for (var index = 0; index < pending.Length; index++)
+                eventId = Guid.NewGuid();
+                operation = "Acme submission";
+                var response = await acme.SubmitAsync(envelope, token);
+                var receipt = new PaymentEvent(
+                    eventId,
+                    payment.PaymentId,
+                    "PaymentResponse",
+                    response.Payload,
+                    response.HttpStatusCode,
+                    clock.GetUtcNow(),
+                    ProcessingComment: response.Failure);
+
+                var remaining = processingWindow - clock.GetElapsedTime(startedAt);
+                var retryDelay = response.RetryDelay;
+                var retrying = retryDelay is { } delay
+                    && delay < remaining
+                    && !token.IsCancellationRequested;
+
+                if (retryDelay is not null && !retrying)
                 {
-                    if (pending[index].ProcessingState != "Pending")
-                    {
-                        continue;
-                    }
-
-                    var result = responseProcessor.Process(payment, pending[index], clock.GetUtcNow());
-                    payment = result.Payment;
-                    pending[index] = result.Event;
-                    applied |= pending[index].ProcessingState == "Applied";
+                    logger.LogWarning(
+                        "Acme E29 retry cannot fit the remaining processing window for payment {PaymentId}, event {PaymentEventId}",
+                        payment.PaymentId,
+                        eventId);
                 }
-            } while (applied);
 
-            payment = payment with
-            {
-                HasPendingEvents = pending.Any(item => item.ProcessingState == "Pending")
-            };
-            await session.SavePaymentAsync(payment, token);
-            foreach (var item in pending)
-            {
-                await session.SaveEventAsync(item, token);
+                operation = "payment event transaction";
+                payment = await ProcessResponseAsync(payment.PaymentId, eventId, receipt, retrying);
+
+                if (!retrying
+                    || payment.State != "Unresolved"
+                    || retryDelay is not { } wait)
+                {
+                    return Result(payment);
+                }
+
+                remaining = processingWindow - clock.GetElapsedTime(startedAt);
+
+                if (wait >= remaining || token.IsCancellationRequested)
+                {
+                    operation = "E29 deadline finalization";
+                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    return Result(payment);
+                }
+
+                logger.LogWarning(
+                    "Acme E29 for payment {PaymentId}, event {PaymentEventId}; retrying after {RetryDelaySeconds} seconds",
+                    payment.PaymentId,
+                    eventId,
+                    wait.TotalSeconds);
+
+                operation = "E29 retry delay";
+                try
+                {
+                    await Task.Delay(wait, clock, token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    operation = "E29 deadline finalization";
+                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    return Result(payment);
+                }
+
+                if (token.IsCancellationRequested || clock.GetElapsedTime(startedAt) >= processingWindow)
+                {
+                    operation = "E29 deadline finalization";
+                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    return Result(payment);
+                }
+
+                // A retry is a new message for the same persisted payment attempt.
+                envelope = requestFactory.Create(payment, details);
             }
-            await session.CommitAsync(token);
-            logger.LogInformation("Payment {PaymentId}, event {PaymentEventId} processed; state {PaymentState}, pending {HasPendingEvents}",
-                payment.PaymentId, eventId, payment.State, payment.HasPendingEvents);
-            return Result(payment);
         }
         catch (Exception exception)
         {
@@ -111,6 +148,76 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 operation, payment.PaymentId, eventId);
             throw;
         }
+    }
+
+    private async Task<Payment> ProcessResponseAsync(
+        Guid paymentId,
+        Guid eventId,
+        PaymentEvent? receipt,
+        bool retryingRateLimit)
+    {
+        // Audit received responses even when the HTTP/retry deadline has expired.
+        using var persistenceTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
+        var token = persistenceTimeout.Token;
+
+        await using var session = await repository.BeginProcessingAsync(paymentId, eventId, token);
+        var payment = session.Payment;
+
+        if (receipt is not null)
+        {
+            await session.InsertEventAsync(receipt, token);
+        }
+
+        var pending = (await session.GetPendingEventsAsync(token)).ToArray();
+        bool applied;
+
+        do
+        {
+            applied = false;
+
+            for (var index = 0; index < pending.Length; index++)
+            {
+                if (pending[index].ProcessingState != "Pending")
+                {
+                    continue;
+                }
+
+                // Earlier E29 receipts await the current attempt's outcome.
+                var deferRateLimitFailure = pending[index].PaymentEventId != eventId || retryingRateLimit;
+                var result = responseProcessor.Process(
+                    payment,
+                    pending[index],
+                    clock.GetUtcNow(),
+                    deferRateLimitFailure);
+
+                payment = result.Payment;
+                pending[index] = result.Event;
+                applied |= pending[index].ProcessingState == "Applied";
+            }
+        } while (applied);
+
+        payment = payment with
+        {
+            HasPendingEvents = pending.Any(item => item.ProcessingState == "Pending")
+        };
+
+        await session.SavePaymentAsync(payment, token);
+
+        foreach (var item in pending)
+        {
+            await session.SaveEventAsync(item, token);
+        }
+
+        await session.CommitAsync(token);
+
+        logger.LogInformation(
+            "Payment {PaymentId}, event {PaymentEventId} processed; state {PaymentState}, pending {HasPendingEvents}",
+            payment.PaymentId,
+            eventId,
+            payment.State,
+            payment.HasPendingEvents);
+
+        return payment;
     }
 
     private PaymentResult Existing(Payment payment, NewPaymentRequest request)

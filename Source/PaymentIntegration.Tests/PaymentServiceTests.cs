@@ -368,6 +368,188 @@ public sealed class PaymentServiceTests
         flow.Session.Verify(session => session.CommitAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task E29_waits_for_the_buffered_delay_then_retries_the_same_persisted_payment(int delaySeconds)
+    {
+        var clock = new ObservedTimeProvider();
+        var flow = new Flow(clock);
+        var submitted = new List<AcmeEnvelope>();
+        flow.Reply = envelope =>
+        {
+            submitted.Add(envelope);
+            return submitted.Count == 1
+                ? RateLimitedReply(envelope, delaySeconds)
+                : BankReply(envelope, "00", 1250);
+        };
+
+        var submission = flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+        var delay = TimeSpan.FromSeconds(delaySeconds);
+        await clock.WaitForTimerAsync(delay);
+
+        Assert.Single(submitted);
+        Assert.Equal("Pending", Assert.Single(flow.Events).ProcessingState);
+        flow.Session.Verify(session => session.CommitAsync(It.IsAny<CancellationToken>()), Times.Once);
+        flow.Session.Verify(session => session.DisposeAsync(), Times.Once);
+
+        clock.Advance(delay - TimeSpan.FromMilliseconds(1));
+        Assert.Single(submitted);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+
+        var result = await submission.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Approved", result.State);
+        Assert.Equal(1250, result.ApprovedAmount);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal(2, submitted.Count);
+        Assert.All(submitted, envelope =>
+        {
+            Assert.Equal(flow.Created!.PaymentId.ToString(), envelope.PaymentRequest.TransactionID);
+            Assert.Equal(flow.Created.OrderNumber, envelope.PaymentRequest.OrderNumber);
+        });
+        Assert.Equal(2, submitted.Select(envelope => envelope.MessageHeader.MessageID).Distinct().Count());
+        flow.Repository.Verify(repository => repository.CreateAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(2, flow.Events.Count);
+        Assert.Equal("Ignored", flow.Events[0].ProcessingState);
+        Assert.Equal("Applied", flow.Events[1].ProcessingState);
+    }
+
+    [Fact]
+    public async Task Repeated_E29_responses_each_wait_and_remain_in_the_audit_history()
+    {
+        var clock = new ObservedTimeProvider();
+        var flow = new Flow(clock);
+        var calls = 0;
+        flow.Reply = envelope => ++calls switch
+        {
+            1 => RateLimitedReply(envelope, 3),
+            2 => RateLimitedReply(envelope, 4),
+            _ => BankReply(envelope, "00", 2000)
+        };
+
+        var submission = flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+        await clock.WaitForTimerAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await clock.WaitForTimerAsync(TimeSpan.FromSeconds(4));
+
+        Assert.Equal(2, calls);
+        Assert.Equal(2, flow.Events.Count);
+        clock.Advance(TimeSpan.FromSeconds(4));
+
+        var result = await submission.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Approved", result.State);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal(3, calls);
+        Assert.Equal(3, flow.Events.Count);
+        Assert.Equal(new short?[] { 429, 429, 200 }, flow.Events.Select(receipt => receipt.HttpStatusCode));
+        Assert.Equal(new[] { "Ignored", "Ignored", "Applied" }, flow.Events.Select(receipt => receipt.ProcessingState));
+    }
+
+    [Fact]
+    public async Task An_E29_delay_that_cannot_fit_the_deadline_is_not_shortened_to_send_early()
+    {
+        var flow = new Flow(new ObservedTimeProvider());
+        flow.Reply = envelope => RateLimitedReply(envelope, 62);
+
+        var result = await flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+
+        Assert.Equal("Failed", result.State);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal("Applied", Assert.Single(flow.Events).ProcessingState);
+        flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task E29_without_a_retry_delay_remains_a_failed_rejection()
+    {
+        var flow = new Flow();
+        flow.Reply = envelope => RateLimitedReply(envelope, null);
+
+        var result = await flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+
+        Assert.Equal("Failed", result.State);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal("Applied", Assert.Single(flow.Events).ProcessingState);
+        flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task E29_does_not_retry_when_the_locked_payment_already_has_a_bank_outcome()
+    {
+        var flow = new Flow(new ObservedTimeProvider());
+        flow.Reply = envelope => RateLimitedReply(envelope, 3);
+        flow.Session.SetupGet(session => session.Payment).Returns(() => flow.Created! with
+        {
+            State = "Approved", ApprovedAmount = 1250, RemainingAmount = 1250
+        });
+
+        var result = await flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+
+        Assert.Equal("Approved", result.State);
+        Assert.Equal(1250, result.RemainingAmount);
+        Assert.Equal("Ignored", Assert.Single(flow.Events).ProcessingState);
+        flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Deadline_expiring_during_E29_wait_finalizes_the_saved_rejection_without_a_new_attempt()
+    {
+        var clock = new ObservedTimeProvider();
+        var flow = new Flow(clock);
+        flow.Reply = envelope => RateLimitedReply(envelope, 3);
+
+        var submission = flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+        await clock.WaitForTimerAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(60));
+
+        var result = await submission.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Failed", result.State);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal("Applied", Assert.Single(flow.Events).ProcessingState);
+        flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
+        flow.Session.Verify(session => session.DisposeAsync(), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task An_unknown_outcome_after_an_E29_retry_is_not_retried_again()
+    {
+        var clock = new ObservedTimeProvider();
+        var flow = new Flow(clock);
+        var calls = 0;
+        flow.Reply = envelope => ++calls == 1
+            ? RateLimitedReply(envelope, 3)
+            : new(null, null, "Timed out.");
+
+        var submission = flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+        await clock.WaitForTimerAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(3));
+
+        var result = await submission.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Unresolved", result.State);
+        Assert.False(result.IsFullyReconciled);
+        Assert.Equal(2, calls);
+        Assert.Equal(2, flow.Events.Count);
+        Assert.All(flow.Events, receipt => Assert.Equal("Pending", receipt.ProcessingState));
+    }
+
+    private static AcmeReply RateLimitedReply(AcmeEnvelope envelope, double? bufferedDelaySeconds)
+    {
+        return new AcmeReply(429, JsonSerializer.SerializeToElement(new
+        {
+            PaymentResponse = new
+            {
+                envelope.PaymentRequest.TransactionID,
+                envelope.PaymentRequest.OrderNumber,
+                TransactionStatus = "Failure",
+                ResponseDetail = new { Source = "Application", Code = "E29" }
+            }
+        }), RetryDelay: bufferedDelaySeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null);
+    }
+
     private static AcmeReply BankReply(AcmeEnvelope envelope, string code, long? authAmount) =>
         new(200, JsonSerializer.SerializeToElement(new
         {
@@ -397,8 +579,9 @@ public sealed class PaymentServiceTests
         public Func<AcmeEnvelope, AcmeReply> Reply { get; set; } = envelope => BankReply(envelope, "00", 2000);
         public PaymentService Service { get; }
 
-        public Flow()
+        public Flow(TimeProvider? timeProvider = null)
         {
+            var clock = timeProvider ?? TimeProvider.System;
             Repository.Setup(repository => repository.GetByAppIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((Payment?)null);
             Repository.Setup(repository => repository.GetDetailsAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PaymentDetails("sensitive-card-token", "customer@example.com", "COFFEE", "CAPE TOWN", "WC", "ZA", "5812"));
@@ -421,7 +604,7 @@ public sealed class PaymentServiceTests
                     Calls.Add("send");
                     return Reply(envelope);
                 });
-            Session.SetupGet(session => session.Payment).Returns(() => Created!);
+            Session.SetupGet(session => session.Payment).Returns(() => SavedPayment ?? Created!);
             Session.Setup(session => session.InsertEventAsync(It.IsAny<PaymentEvent>(), It.IsAny<CancellationToken>()))
                 .Callback((PaymentEvent receipt, CancellationToken _) =>
                 {
@@ -433,7 +616,7 @@ public sealed class PaymentServiceTests
                 .ReturnsAsync(() =>
                 {
                     Calls.Add("read_pending");
-                    return Events;
+                    return Events.Where(receipt => receipt.ProcessingState == "Pending").ToArray();
                 });
             Session.Setup(session => session.SavePaymentAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()))
                 .Callback((Payment payment, CancellationToken _) =>
@@ -447,6 +630,8 @@ public sealed class PaymentServiceTests
                 {
                     Calls.Add("save_event");
                     SavedEvents.Add(receipt);
+                    var index = Events.FindIndex(item => item.PaymentEventId == receipt.PaymentEventId);
+                    Events[index] = receipt;
                 })
                 .Returns(Task.CompletedTask);
             Session.Setup(session => session.CommitAsync(It.IsAny<CancellationToken>()))
@@ -454,8 +639,8 @@ public sealed class PaymentServiceTests
             Session.Setup(session => session.DisposeAsync()).Callback(() => Calls.Add("dispose")).Returns(ValueTask.CompletedTask);
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
-                    TimeProvider.System, new FnbCardAcceptorNameFormatter()),
-                new PaymentResponseProcessor(), TimeProvider.System, NullLogger<PaymentService>.Instance);
+                    clock, new FnbCardAcceptorNameFormatter()),
+                new PaymentResponseProcessor(), clock, NullLogger<PaymentService>.Instance);
         }
 
         public Payment ExistingPayment(string state) => new(Guid.NewGuid(), Request.AppPaymentId!, Request.CustomerId!,
