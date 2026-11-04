@@ -8,16 +8,16 @@ public sealed class PaymentResponseProcessor
         DateTimeOffset processedAt,
         bool retryingRateLimit = false)
     {
-        if (receipt.Source != "PaymentResponse")
+        if (receipt.Source is not ("PaymentResponse" or "TransactionQuery"))
         {
-            //TODO: Implement notification and query processing in their respective steps.
+            //TODO: Implement notification processing in its respective step.
             throw new NotImplementedException($"Event source {receipt.Source} is not implemented yet.");
         }
 
-        var hasOutcome = payment.State is "Approved" or "Declined" or "Failed";
+        var hasOutcome = payment.State != "Unresolved";
         // A 409 describes rejection of this request even though its TransactionID
         // names the transaction already holding the RRN. Never adopt that ID.
-        if (receipt.HttpStatusCode is 400 or 401 or 409 or 429)
+        if (receipt.Source == "PaymentResponse" && receipt.HttpStatusCode is (400 or 401 or 409 or 429))
         {
             if (hasOutcome)
             {
@@ -84,6 +84,19 @@ public sealed class PaymentResponseProcessor
                 "Acme response does not establish an acquirer outcome.");
         }
 
+        if (Text(response, "TransactionStatus") == "Processing")
+        {
+            return hasOutcome
+                ? Ignore(payment, receipt, processedAt, "A payment outcome is already known; this receipt is still processing.")
+                : LeavePending(payment, receipt, "Acme is still processing the payment; outcome remains unknown.");
+        }
+
+        if (receipt.Source == "TransactionQuery" && Text(response, "TransactionStatus") is ("Reversed" or "Refunded"))
+        {
+            // RTTQ is a snapshot, not the adjustment history needed to calculate remaining value.
+            return LeavePending(payment, receipt, "Query reports a later lifecycle state requiring reconciliation.");
+        }
+
         // TransactionStatus describes gateway processing. The acquirer code decides the outcome.
         var approved = Text(detail, "Code") == "00";
         long? amount = null;
@@ -92,6 +105,12 @@ public sealed class PaymentResponseProcessor
             if (!response.TryGetProperty("AuthAmount", out var authorised)
                 || authorised.ValueKind != JsonValueKind.Number || !authorised.TryGetInt64(out var value) || value < 0)
             {
+                if (payment.State == "Approved" && payment.ApprovedAmount is not null)
+                {
+                    return Ignore(payment, receipt, processedAt,
+                        "Approval has no valid AuthAmount; the authorised amount is already established.");
+                }
+
                 return LeavePending(payment, receipt,
                     "Approval has no valid AuthAmount; approved value remains unknown.");
             }

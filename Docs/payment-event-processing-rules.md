@@ -20,6 +20,15 @@
 - A missing, invalid or unrepresentable `Retry-After` value does not cause a guessed delay or an automatic retry; the rejection is **Failed**.
 - Timeouts, connection failures and HTTP `500`–`504` remain **Unresolved** and are not automatically retried.
 
+## RTTQ Recovery During Submission
+
+- After processing an inconclusive submission result, make at most one Real Time Transaction Query (RTTQ) for the same persisted `TransactionID`, provided the outcome remains unknown and submission time remains. This includes timeouts, uncertain network failures, HTTP `500`–`504`, and unusable or incomplete responses such as approval without a valid `AuthAmount`.
+- Keep the existing `35`-second payment HTTP timeout and `60`-second submission deadline, including E29 waits. RTTQ has a `10`-second limit, including waiting for outbound capacity, capped by the remaining submission time. Do not reset or extend the deadline for RTTQ.
+- Make RTTQ calls outside database transactions. Record and process the result through the same locked event-processing flow, reloading the latest persisted payment state before applying it.
+- Do not query after a complete outcome is known or after an explicit payment rejection. Repeating an app request still returns the existing payment without making another Acme call.
+- Do not repeat RTTQ during submission. A query returning `Processing`, `404`, an error, or an incomplete result does not establish a payment failure; keep an unknown outcome unresolved for later callbacks or separate reconciliation.
+- Audit and persist received results using the separate bounded database timeout even if the submission deadline has expired. The submission deadline is not a guarantee of the total HTTP response time.
+
 ## Payment Events and Amounts
 
 - All monetary values in the database are stored in the currency's lowest monetary unit, e.g., cents for ZAR: R19.99 is stored as 1999.

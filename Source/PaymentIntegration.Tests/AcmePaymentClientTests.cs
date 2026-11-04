@@ -7,7 +7,7 @@ using Xunit;
 
 namespace PaymentIntegration.Tests;
 
-public sealed class AcmePaymentClientTests
+public sealed partial class AcmePaymentClientTests
 {
     [Fact]
     public async Task Sends_the_PascalCase_contract_with_bearer_auth_without_logging_secrets()
@@ -95,6 +95,7 @@ public sealed class AcmePaymentClientTests
         var result = await Client(http, limiter).SubmitAsync(Request(), CancellationToken.None);
 
         Assert.Contains("capacity", result.Failure);
+        Assert.False(result.RequestAttempted);
     }
 
     [Theory]

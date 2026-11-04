@@ -7,7 +7,7 @@ using Xunit;
 
 namespace PaymentIntegration.Tests;
 
-public sealed class PaymentServiceTests
+public sealed partial class PaymentServiceTests
 {
     [Theory]
     [InlineData("05")]
@@ -61,7 +61,7 @@ public sealed class PaymentServiceTests
         Assert.Equal("Unresolved", result.State);
         Assert.Null(result.ApprovedAmount);
         Assert.False(result.IsFullyReconciled);
-        Assert.Equal("Pending", Assert.Single(flow.SavedEvents).ProcessingState);
+        Assert.Equal("Pending", Assert.Single(flow.Events, item => item.Source == "PaymentResponse").ProcessingState);
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public sealed class PaymentServiceTests
         Assert.Equal("Unresolved", result.State);
         Assert.Null(result.ApprovedAmount);
         Assert.False(result.IsFullyReconciled);
-        var receipt = Assert.Single(flow.SavedEvents);
+        var receipt = Assert.Single(flow.Events, item => item.Source == "PaymentResponse");
         Assert.Equal("Pending", receipt.ProcessingState);
         Assert.Null(receipt.HttpStatusCode);
         flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -118,6 +118,7 @@ public sealed class PaymentServiceTests
         Assert.Null(result.RemainingAmount);
         Assert.True(result.IsFullyReconciled);
         Assert.Equal("Applied", Assert.Single(flow.SavedEvents).ProcessingState);
+        flow.Client.Verify(client => client.QueryAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -136,7 +137,7 @@ public sealed class PaymentServiceTests
         Assert.Equal("Unresolved", result.State);
         Assert.Null(result.ApprovedAmount);
         Assert.False(result.IsFullyReconciled);
-        Assert.Equal("Pending", Assert.Single(flow.SavedEvents).ProcessingState);
+        Assert.Equal("Pending", Assert.Single(flow.Events, item => item.Source == "PaymentResponse").ProcessingState);
     }
 
     [Fact]
@@ -156,7 +157,7 @@ public sealed class PaymentServiceTests
 
         Assert.Equal("Unresolved", result.State);
         Assert.Null(result.ApprovedAmount);
-        var receipt = Assert.Single(flow.SavedEvents);
+        var receipt = Assert.Single(flow.Events, item => item.Source == "PaymentResponse");
         Assert.Equal("Ignored", receipt.ProcessingState);
         Assert.Contains("different transaction", receipt.ProcessingComment);
     }
@@ -532,8 +533,9 @@ public sealed class PaymentServiceTests
         Assert.Equal("Unresolved", result.State);
         Assert.False(result.IsFullyReconciled);
         Assert.Equal(2, calls);
-        Assert.Equal(2, flow.Events.Count);
+        Assert.Equal(3, flow.Events.Count);
         Assert.All(flow.Events, receipt => Assert.Equal("Pending", receipt.ProcessingState));
+        flow.Client.Verify(client => client.QueryAsync(flow.Created!.PaymentId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static AcmeReply RateLimitedReply(AcmeEnvelope envelope, double? bufferedDelaySeconds)
@@ -577,6 +579,8 @@ public sealed class PaymentServiceTests
         public Payment? Created { get; private set; }
         public Payment? SavedPayment { get; private set; }
         public Func<AcmeEnvelope, AcmeReply> Reply { get; set; } = envelope => BankReply(envelope, "00", 2000);
+        public Func<Guid, CancellationToken, Task<AcmeReply>> QueryReply { get; set; } =
+            (_, _) => Task.FromResult(new AcmeReply(null, null, "Query outcome unknown."));
         public PaymentService Service { get; }
 
         public Flow(TimeProvider? timeProvider = null)
@@ -603,6 +607,12 @@ public sealed class PaymentServiceTests
                 {
                     Calls.Add("send");
                     return Reply(envelope);
+                });
+            Client.Setup(client => client.QueryAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .Returns((Guid paymentId, CancellationToken token) =>
+                {
+                    Calls.Add("query");
+                    return QueryReply(paymentId, token);
                 });
             Session.SetupGet(session => session.Payment).Returns(() => SavedPayment ?? Created!);
             Session.Setup(session => session.InsertEventAsync(It.IsAny<PaymentEvent>(), It.IsAny<CancellationToken>()))
