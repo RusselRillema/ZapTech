@@ -2,4 +2,6 @@ Use this compliance check only immediately before creating a commit, immediately
 
 Merely loading or including this file in the context must not trigger a full Appendix A read.
 
-Read Appendix A in `Docs/Zapper - Team_Lead Assignment.pdf` in its entirety if files under `Source/AcmePay.Stub/` have changed. Ensure that all code changes conform to every specification in the appendix
+Read Appendix A in `Docs/Zapper - Team_Lead Assignment.pdf` in its entirety if files under `Source/AcmePay.Stub/` have changed. Ensure that all code changes conform to every specification in the appendix.
+
+If no files under `Source/AcmePay.Stub/` have changed, a full Appendix A read is not required unless another applicable instruction or trigger requires it.

@@ -12,4 +12,4 @@
 
 ## Additional Paths and Links
 
-Before creating a commit, opening a pull request, or reviewing a pull request, read and follow [ai/skills/AcmeCompliance.md](ai/skills/AcmeCompliance.md).
+Before creating a commit, opening a pull request, or reviewing a pull request, read and follow [ai/skills/AcmeCompliance.md](ai/skills/AcmeCompliance.md) and [ai/skills/SqlCompliance.md](ai/skills/SqlCompliance.md).
