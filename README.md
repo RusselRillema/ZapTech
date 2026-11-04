@@ -103,11 +103,30 @@ With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same b
 | --- | --- |
 | `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate a full-amount event using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. |
 | `GET /__stub/transactions/{id}/callbacks` | List generated callback `identifier`, `kind` and `isHeld`; reading does not send anything. |
+| `GET /__stub/transactions/{id}` | Observe accepted/replayed submission count, configured reply delay and whether a delayed reply was interrupted. |
 | `POST /__stub/transactions/{id}/callbacks/{identifier}/send` | Queue a held callback or replay one using its original bytes and identity; returns 202, or 503 if the queue is full. |
 
-`isHeld` means manual release is still required; callback acknowledgements appear in the stub logs.
+`isHeld` means manual release is still required. Callback lists also expose `completedAttempts`, `acknowledgements` (HTTP 200 only) and `lastHttpStatusCode` from actual HTTP deliveries. Reads do not send callbacks or process events. A 202 from the send control only means queued; wait for an increased acknowledgement count to confirm receipt.
 
-For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again. The demo runner and service reversal/refund handling remain unfinished.
+For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again. Service reversal/refund handling remains unfinished.
+
+## Console demonstrations
+
+Start the stack with the Docker environment settings and `ACME_ENABLE_CONTROLS=true`, then run one scenario in a disposable runner container:
+
+```text
+docker compose build demo
+docker compose run --rm --no-deps -T demo --list
+docker compose run --rm --no-deps -T demo approval
+```
+
+The six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Reversal/refund demonstrations are excluded until Task 1 Step 6 is ready.
+
+Use a dedicated demo stack and run scenarios sequentially. Each run creates a new app payment identifier using the existing seeded customer/card/sub-merchant from the submission example, retains those payments for audit, and restores the previous stub scenario settings. To use other existing catalogue records, set `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID` and `DEMO_SUB_MERCHANT_ID`; `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` default to 1999 and ZAR. No data or schemas are created by the runner.
+
+`out-of-order` delivers Payment Advice before the delayed submission response, observes an Unresolved payment without an authoritative approved amount, and waits for the response to reconcile it. `timeout` verifies Acme observed its delayed reply being interrupted, then checks the service recovered approval before any advice was released. This exercises submission-time RTTQ recovery. Ordering between reversal/refund notifications remains deferred with step 6.
+
+For native execution, use `dotnet run --project Source/PaymentIntegration.Demo -- approval` from the repository root. It loads optional `.env` values, requires `ACME_API_KEY`, and defaults to host ports 5080/5081. Override `DEMO_PAYMENT_BASE_URL` and `DEMO_ACME_BASE_URL` for different host ports. The Compose runner uses internal service DNS automatically and needs no host .NET SDK.
 
 ## Tests and verification
 

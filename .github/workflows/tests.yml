@@ -44,6 +44,12 @@ jobs:
       - name: Build and start the application stack
         run: docker compose --env-file .env.docker.example up --build --wait --wait-timeout 180
 
+      - name: Build the console runner
+        run: docker compose --env-file .env.docker.example build demo
+
+      - name: Demonstrate a payment through the real stack
+        run: docker compose --env-file .env.docker.example run --rm --no-deps -T demo approval
+
       - name: Application logs
         if: always()
         run: docker compose --env-file .env.docker.example logs --no-color --tail=100 db acme payments

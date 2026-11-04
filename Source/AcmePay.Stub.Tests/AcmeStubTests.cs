@@ -49,6 +49,7 @@ public sealed class AcmeStubTests
     [InlineData("/__stub/scenario", "POST", null)]
     [InlineData("/__stub/scenario", "GET", "Bearer wrong")]
     [InlineData("/__stub/transactions/attempt-1/callbacks", "GET", null)]
+    [InlineData("/__stub/transactions/attempt-1", "GET", null)]
     [InlineData("/__stub/transactions/attempt-1/callbacks/attempt-1/send", "POST", "Bearer wrong")]
     public async Task Missing_or_invalid_bearer_key_is_rejected_before_processing(string path, string method, string? authorization)
     {
@@ -235,6 +236,7 @@ public sealed class AcmeStubTests
     [InlineData("/__stub/scenario", "POST")]
     [InlineData("/__stub/scenario", "GET")]
     [InlineData("/__stub/transactions/attempt-1/callbacks", "GET")]
+    [InlineData("/__stub/transactions/attempt-1", "GET")]
     [InlineData("/__stub/transactions/attempt-1/callbacks/attempt-1/send", "POST")]
     public async Task Local_triggers_are_absent_unless_enabled(string path, string method)
     {

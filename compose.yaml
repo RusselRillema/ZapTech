@@ -1,4 +1,22 @@
 services:
+  demo:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Source/PaymentIntegration.Demo/Dockerfile
+    environment:
+      DEMO_PAYMENT_BASE_URL: http://payments:8080
+      DEMO_ACME_BASE_URL: http://acme:8080
+      ACME_API_KEY: ${ACME_API_KEY:-}
+      DEMO_CUSTOMER_ID: ${DEMO_CUSTOMER_ID:-860e4537-28e4-4b83-a399-d4bd13f63a26}
+      DEMO_CUSTOMER_CARD_ID: ${DEMO_CUSTOMER_CARD_ID:-8ee3f008-84f5-4152-80a5-21821abdd045}
+      DEMO_SUB_MERCHANT_ID: ${DEMO_SUB_MERCHANT_ID:-ZAP9193145856}
+      DEMO_AMOUNT: ${DEMO_AMOUNT:-1999}
+      DEMO_CURRENCY_CODE: ${DEMO_CURRENCY_CODE:-ZAR}
+    depends_on:
+      payments:
+        condition: service_healthy
+
   payments:
     build:
       context: .

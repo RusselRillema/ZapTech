@@ -38,6 +38,8 @@ A bounded callback queue and one worker reuse HTTP connections. Attempts time ou
 
 DotNetEnv loads an optional repository-root `.env` before native host creation without replacing existing variables. Compose maps only each service's settings, also preserving shell precedence; required values are checked when that service starts. AWS can supply runtime variables directly. Native/container examples account for listening addresses and callback routing.
 
+The console demo is a separate HTTP client available natively or through the opt-in Compose `demo` service. It uses existing seeded catalogue records with a fresh app payment ID per run, displays actual service observations and waits for callback acknowledgements from the stub's HTTP dispatcher. Stub diagnostics count received submissions and record interrupted delayed replies; they do not interpret payment state. The runner compares documented observable outcomes without doing payment calculations or accessing the database. Advice-before-response ordering and timeout recovery are demonstrated; reversal/refund scenarios await step 6. Runs are sequential against a dedicated stub and restore its previous scenario configuration.
+
 ## Validation and AI workflow
 
 The Release suite covers service tests with mocked DAL/Acme dependencies, HTTP contract/error tests and Acme HTTP/callback tests. Scenario coverage checks decline consistency, unchanged transaction replay after configuration updates, callback ordering and authenticated replay, invalid configuration, access controls and delayed/lost replies. An observed controlled clock advances response delays without real-time waits; independent ephemeral listeners allow stub tests to run concurrently. These verify application behavior without a database. The new procedure deployment, output mapping, privileges, row locking and database transactions remain unverified against PostgreSQL; full end-to-end verification is deferred to step 6. No database fixtures or substitute database harnesses are used.
@@ -48,4 +50,4 @@ Codex used the assignment, repository, related startup discussion and official d
 
 ## Remaining deliverables
 
-Reversal/refund processing, further reconciliation, the demo runner, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Further stub simulations, including partial authorisations/refunds, remain deferred.
+Reversal/refund processing, further reconciliation, the scenario script, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Further stub simulations, including partial authorisations/refunds, remain deferred.
