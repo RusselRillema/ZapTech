@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AcmePay.Stub", "Source\Acme
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AcmePay.Stub.Tests", "Source\AcmePay.Stub.Tests\AcmePay.Stub.Tests.csproj", "{FF200ADF-7B38-42FA-9105-7A98D6B15B11}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentIntegration", "Source\PaymentIntegration\PaymentIntegration.csproj", "{1C3B1CC9-7831-4975-AAE4-CBEE66185583}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentIntegration.Tests", "Source\PaymentIntegration.Tests\PaymentIntegration.Tests.csproj", "{419994F1-8B69-44B8-A01F-1DB975C1971E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,6 +47,30 @@ Global
 		{FF200ADF-7B38-42FA-9105-7A98D6B15B11}.Release|x64.Build.0 = Release|Any CPU
 		{FF200ADF-7B38-42FA-9105-7A98D6B15B11}.Release|x86.ActiveCfg = Release|Any CPU
 		{FF200ADF-7B38-42FA-9105-7A98D6B15B11}.Release|x86.Build.0 = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|x64.Build.0 = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Debug|x86.Build.0 = Debug|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|x64.ActiveCfg = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|x64.Build.0 = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|x86.ActiveCfg = Release|Any CPU
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583}.Release|x86.Build.0 = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|x64.Build.0 = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Debug|x86.Build.0 = Debug|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x64.ActiveCfg = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x64.Build.0 = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x86.ActiveCfg = Release|Any CPU
+		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -50,5 +78,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{ABDAC28D-AE53-4CF6-A934-0DDE314ABD1D} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
 		{FF200ADF-7B38-42FA-9105-7A98D6B15B11} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
+		{1C3B1CC9-7831-4975-AAE4-CBEE66185583} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
+		{419994F1-8B69-44B8-A01F-1DB975C1971E} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
 	EndGlobalSection
 EndGlobal

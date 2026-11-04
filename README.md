@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 Acme Pay stub and PostgreSQL 18 bootstrap with seeded customer, sub-merchant and card tables for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). PaymentIntegration, payment lifecycle tables, procedures and reporting remain unfinished.
+.NET 8 PaymentIntegration host, Acme Pay stub and PostgreSQL 18 bootstrap with seeded customer, sub-merchant and card tables for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Payment processing, payment lifecycle tables, procedures and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -10,6 +10,7 @@ Run commands from the repository root. Native database deployment uses your exis
 | --- | --- | --- |
 | Native database | `psql --version` (18.x); existing privileged connection | Run the setup script below. |
 | Native Acme | `dotnet --list-sdks`, `dotnet --list-runtimes`; .NET 8 SDK and runtimes | `dotnet run --project Source/AcmePay.Stub` |
+| Native PaymentIntegration | .NET 8 SDK and runtimes | `dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080` |
 | Compose | `docker --version`, `docker compose version`, `docker info` | `docker compose up --build -d` |
 | Existing tests | .NET 8 SDK, or Docker | Commands below; no running services or credentials needed. |
 
@@ -17,7 +18,9 @@ Install missing software using the official [PostgreSQL](https://www.postgresql.
 
 For Acme, copy [env.local.example](env.local.example) (native) or [.env.docker.example](.env.docker.example) (containers) to root `.env` using your editor/file manager. Preserve customised files; replace example Acme credentials and callback URLs. For Docker's database, also set `POSTGRES_PASSWORD`; `POSTGRES_USER` defaults to `postgres` and `POSTGRES_PORT` to `5432`.
 
-Acme loads optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
+Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
+
+PaymentIntegration currently exposes only [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) and needs no database, Acme service or credentials. Its native command explicitly selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs Acme and the database.
 
 ## Database setup and removal
 
