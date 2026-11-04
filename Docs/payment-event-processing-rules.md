@@ -20,6 +20,11 @@
 - A missing, invalid or unrepresentable `Retry-After` value does not cause a guessed delay or an automatic retry; the rejection is **Failed**.
 - Timeouts, connection failures and HTTP `500`–`504` remain **Unresolved** and are not automatically retried.
 
+## RTTQ Recovery During Submission
+
+- If submission leaves the outcome unknown, query Acme once using the same transaction ID. Allow up to 10 seconds within the existing 60-second submission window.
+- Process the query as a payment event. Inconclusive results remain unresolved for later recovery.
+
 ## Payment Events and Amounts
 
 - All monetary values in the database are stored in the currency's lowest monetary unit, e.g., cents for ZAR: R19.99 is stored as 1999.

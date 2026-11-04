@@ -13,23 +13,38 @@ public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settin
 
     public async Task<AcmeReply> SubmitAsync(AcmeEnvelope request, CancellationToken cancellationToken)
     {
-        var paymentId = request.PaymentRequest.TransactionID;
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(settings.BaseUrl, "/api/payment"))
+        {
+            Content = JsonContent.Create(request, options: WireJson)
+        };
+        return await SendAsync(message, request.PaymentRequest.TransactionID, "submit", cancellationToken);
+    }
+
+    public async Task<AcmeReply> QueryAsync(Guid paymentId, CancellationToken cancellationToken)
+    {
+        var path = $"/apirttq/query/Merchant/{Uri.EscapeDataString(settings.MerchantId)}?TransactionID={paymentId:D}";
+        using var message = new HttpRequestMessage(HttpMethod.Get, new Uri(settings.BaseUrl, path));
+        return await SendAsync(message, paymentId.ToString(), "query", cancellationToken);
+    }
+
+    private async Task<AcmeReply> SendAsync(HttpRequestMessage message, string paymentId, string operation,
+        CancellationToken cancellationToken)
+    {
+        var requestAttempted = false;
         try
         {
             using var lease = await limiter.AcquireAsync(1, cancellationToken);
             if (!lease.IsAcquired)
             {
-                logger.LogWarning("Acme capacity unavailable for payment {PaymentId}", paymentId);
-                return new(null, null, "Acme submission capacity unavailable.");
+                logger.LogWarning("Acme capacity unavailable for operation {Operation}, payment {PaymentId}", operation, paymentId);
+                return new(null, null, "Acme outbound capacity unavailable.", RequestAttempted: false);
             }
 
-            using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(settings.BaseUrl, "/api/payment"))
-            {
-                Content = JsonContent.Create(request, options: WireJson)
-            };
             message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
-            logger.LogInformation("Submitting payment {PaymentId} to Acme", paymentId);
-            // The service owns E29 retries so every response is audited before waiting.
+            logger.LogInformation("Acme operation {Operation} for payment {PaymentId}", operation, paymentId);
+            // The service owns retries so every response is audited before waiting.
+            cancellationToken.ThrowIfCancellationRequested();
+            requestAttempted = true;
             using var response = await httpClient.SendAsync(message, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             JsonElement? payload = null;
@@ -46,21 +61,22 @@ public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settin
                     payload = JsonSerializer.SerializeToElement(body);
                 }
             }
-            logger.LogInformation("Acme returned HTTP {HttpStatusCode} for payment {PaymentId}",
-                (int)response.StatusCode, paymentId);
-            var retryDelay = GetRetryDelay(response, payload, paymentId);
+            logger.LogInformation("Acme operation {Operation} returned HTTP {HttpStatusCode} for payment {PaymentId}",
+                operation, (int)response.StatusCode, paymentId);
+            // E29 retries apply to payment submission only, never to RTTQ recovery.
+            var retryDelay = operation == "submit" ? GetRetryDelay(response, payload, paymentId) : null;
             return new((short)response.StatusCode, payload, RetryDelay: retryDelay);
         }
         catch (OperationCanceledException exception)
         {
             logger.LogWarning(exception, "Acme operation {Operation} timed out or was cancelled for payment {PaymentId}",
-                "submit", paymentId);
-            return new(null, null, "Acme request timed out or was cancelled; outcome unknown.");
+                operation, paymentId);
+            return new(null, null, "Acme request timed out or was cancelled; outcome unknown.", RequestAttempted: requestAttempted);
         }
         catch (HttpRequestException exception)
         {
-            logger.LogError(exception, "Acme operation {Operation} failed for payment {PaymentId}", "submit", paymentId);
-            return new(null, null, "Acme connection failed; outcome unknown.");
+            logger.LogError(exception, "Acme operation {Operation} failed for payment {PaymentId}", operation, paymentId);
+            return new(null, null, "Acme connection failed; outcome unknown.", RequestAttempted: requestAttempted);
         }
     }
 
