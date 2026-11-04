@@ -128,6 +128,14 @@ Use a dedicated demo stack and run scenarios sequentially. Each run creates a ne
 
 For native execution, use `dotnet run --project Source/PaymentIntegration.Demo -- approval` from the repository root. It loads optional `.env` values, requires `ACME_API_KEY`, and defaults to host ports 5080/5081. Override `DEMO_PAYMENT_BASE_URL` and `DEMO_ACME_BASE_URL` for different host ports. The Compose runner uses internal service DNS automatically and needs no host .NET SDK.
 
+To build the runner, start/wait for the full Docker stack and run all six supported scenarios sequentially:
+
+```text
+bash Scripts/run-demos.sh
+```
+
+The script requires Bash and Docker Compose, reads the configured root `.env`, obtains its scenario list from the console, and stops with a nonzero exit status on the first failure. Use `bash Scripts/run-demos.sh approval timeout` for selected scenarios, `--list` to list them or `--help` for setup options. `DEMO_ENV_FILE` selects another environment file; `COMPOSE_PROJECT_NAME` selects another dedicated stack. Existing containers and database audit data are retained; the script never resets a database or removes volumes. The two delayed scenarios take about 50 seconds together, in addition to build/startup time.
+
 ## Tests and verification
 
 ```text
@@ -140,4 +148,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. The new procedures, their privileges and database locking have not been verified against PostgreSQL. Full end-to-end testing belongs to step 6. See [SOLUTION.md](SOLUTION.md) for design and verification limits.
+The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. Compose CI separately runs the same scenario script against PostgreSQL initialized by the real deployment SQL. This covers the six demonstrated HTTP flows; concurrency under multiple service instances, database failure handling and step 6 remain outside that coverage. See [SOLUTION.md](SOLUTION.md) for verification limits.

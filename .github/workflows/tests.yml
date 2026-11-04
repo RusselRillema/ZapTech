@@ -38,17 +38,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Validate Compose configuration
-        run: docker compose --env-file .env.docker.example config --quiet
-
-      - name: Build and start the application stack
-        run: docker compose --env-file .env.docker.example up --build --wait --wait-timeout 180
-
-      - name: Build the console runner
-        run: docker compose --env-file .env.docker.example build demo
-
-      - name: Demonstrate a payment through the real stack
-        run: docker compose --env-file .env.docker.example run --rm --no-deps -T demo approval
+      - name: Run every supported scenario through the real Docker stack
+        env:
+          DEMO_ENV_FILE: .env.docker.example
+        run: bash Scripts/run-demos.sh
 
       - name: Application logs
         if: always()
