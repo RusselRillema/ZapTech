@@ -37,7 +37,11 @@ GRANT USAGE ON SCHEMA public TO payment_integration_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"deployment_owner"
     REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
--- Add future schema, procedure and seed files here, before the execution grant.
--- There are currently no application tables, procedures or seed records.
+-- Resolve includes relative to this file for both native and Docker setup.
+-- These scripts share this transaction; neither starts or commits its own.
+\ir 001_CreateTables.sql
+\ir 002_SeedSampleData.sql
+
+-- Add future procedures before the execution grant.
 GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO payment_integration_app;
 COMMIT;

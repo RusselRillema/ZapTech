@@ -8,7 +8,7 @@ The database name and application credentials are hard-coded development values,
 
 The connected administrator owns the database and will own its objects. A separate non-admin application login receives `CONNECT`, schema `USAGE` and procedure `EXECUTE`, without direct table/sequence grants, creation privileges or administrator membership. Public database/schema access and default public routine execution are revoked. Password verifiers use SCRAM-SHA-256.
 
-No application tables, procedures or seeds exist yet. Future SQL files belong in the shared setup sequence before procedure execution grants. Table-accessing procedures must use `SECURITY DEFINER` with a trusted search path and named arguments with bound values; the caller controls transactions. Existing databases will need explicit schema deployment rather than replaying initial provisioning.
+The shared setup includes separate table and seed scripts for `Customers`, `SubMerchants` and `CustomerCards` in its existing transaction. Customer and sub-merchant primary keys are Zapper's supplied identifiers; card friendly names are unique per customer. Five synthetic customers, three sub-merchants and eight cards demonstrate the catalogue. Procedures and payment lifecycle tables remain unfinished. Future procedures belong before execution grants and must use `SECURITY DEFINER` with a trusted search path and named arguments with bound values; the caller controls transactions. Existing databases need explicit schema deployment rather than replaying initial provisioning.
 
 Compose has independent Acme and database services with loopback publishing. A persistent volume retains PostgreSQL data; a thin first-start initializer invokes the shared setup file. Removal SQL is mounted outside the automatic initialization directory. The authenticated application-login health check proves connectivity and credentials, not future procedure correctness.
 
@@ -22,10 +22,10 @@ DotNetEnv loads an optional repository-root `.env` before native host creation w
 
 ## Validation and AI workflow
 
-The Release build and all 24 existing xUnit cases passed on Linux during this update. Shell syntax and Compose configuration checks passed with no environment file and with each example template. No tests or fixtures changed from main. Database runtime validation remains paused: setup, removal, permissions, authentication and persistence have not been exercised. Docker execution and Windows/macOS execution remain unverified.
+The Acme Release build and all 24 existing xUnit cases passed on Linux. Shell syntax, Compose configuration, Docker build and startup passed using the Docker environment template. A separate Compose project with a new volume ran the actual setup and included SQL files: queries confirmed five customers, three sub-merchants and eight cards. The authenticated application-login database health check and Acme HTTP health endpoint passed. Rerunning the actual seed file preserved the counts. The temporary test containers and volume were removed. No tests or fixtures changed from main. Native database deployment, removal SQL, detailed role permissions, restart persistence and Windows/macOS execution remain unverified.
 
 Codex used the assignment, repository, related startup discussion and official documentation. The user selected shared SQL, hard-coded development credentials and procedure-only access, avoiding an extra launcher. Static checks and documentation review support this update; actual database verification must use these deployment scripts without copied schemas, database test harnesses or fabricated fixtures.
 
 ## Remaining deliverables
 
-Payment processing, notification handling, schema, synthetic seeds, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Deferred stub scenarios are listed in [Docs/TODO.md](Docs/TODO.md).
+Payment processing, notification handling, payment lifecycle schema, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Deferred stub scenarios are listed in [Docs/TODO.md](Docs/TODO.md).
