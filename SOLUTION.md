@@ -22,6 +22,10 @@ Acme response processing begins a new transaction, acquires the payment row lock
 
 The Acme client reuses pooled HTTP connections, bounds concurrent calls to 20 with 40 queued requests per instance, uses a 35-second HTTP timeout and returns each response to the service for audit. Only HTTP 429/E29 with valid Retry-After seconds is automatically retried, using the same persisted payment identifiers and an asynchronous delay of max(3 seconds, twice Retry-After). Each response is recorded before waiting; no payment transaction or client concurrency lease is held during the delay. Retries share a 60-second submission window that continues if the caller disconnects. Received responses are persisted under a separate 30-second deadline, including after the submission window expires. Structured `ILogger<T>` messages carry operation and payment/event identifiers, excluding credentials, card tokens and raw payloads. FNB descriptor rules live behind `ICardAcceptorNameFormatter`; another bank can supply an implementation through DI without changing payment orchestration. FNB uses the confirmed ZAP* prefix and rejects oversized merchant/city fields.
 
+## Payment status
+
+`GET /payments?appPaymentId=...` uses the existing read-only `payments_get_by_app_id` procedure, which returns stored payment state and pending-event existence from one database snapshot. A query parameter accommodates the same identifiers accepted by submission, including URL-encoded slashes. The read service depends only on the repository and requires no Acme configuration. Submission and status share the response projection: `IsFullyReconciled` requires Approved, Declined or Failed state and no pending events. Found payments return 200 even when unresolved; unknown app identifiers return 404. Reads neither process pending events nor query Acme; reconciliation remains separate.
+
 ## Acme design and configuration
 
 The .NET 8 Minimal API runs natively or in a non-root container. In-memory storage keeps the supporting stub small: concurrent submissions replay the original outcome for 24 hours, RRNs remain reserved until restart, and queries reflect reversals/refunds. Valid payments are approved; optional controls support full reversals/refunds. Partial outcomes and further simulations are deferred.
@@ -40,4 +44,4 @@ Codex used the assignment, repository, related startup discussion and official d
 
 ## Remaining deliverables
 
-Payment status queries, notification handling, reversal/refund processing, reconciliation, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Deferred stub scenarios are listed in [Docs/TODO.md](Docs/TODO.md).
+Notification handling, reversal/refund processing, reconciliation, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Deferred stub scenarios are listed in [Docs/TODO.md](Docs/TODO.md).

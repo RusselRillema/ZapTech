@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 payment submission service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Payment status queries, callbacks, reconciliation and reporting remain unfinished.
+.NET 8 payment submission and status service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Callbacks, reconciliation and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -20,7 +20,7 @@ Copy [env.local.example](env.local.example) (native) or [.env.docker.example](.e
 
 Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
 
-PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs only Acme and the database; run PaymentIntegration natively with the native environment settings.
+PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs only Acme and the database; run PaymentIntegration natively with the native environment settings.
 
 ## Database setup and removal
 
@@ -68,7 +68,9 @@ Send JSON to `POST http://127.0.0.1:5080/payments`:
 }
 ```
 
-Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window. Timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Status queries and reconciliation are deferred.
+Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window. Timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Reconciliation is deferred.
+
+Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` is true only for Approved, Declined or Failed payments with no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
 
 ## Acme operation
 

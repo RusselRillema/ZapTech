@@ -4,8 +4,7 @@ public static class PaymentValidation
 {
     public static void Validate(NewPaymentRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.AppPaymentId))
-            throw Invalid("AppPaymentId is required.");
+        ValidateAppPaymentId(request.AppPaymentId);
         if (string.IsNullOrWhiteSpace(request.CustomerId))
             throw Invalid("CustomerId is required.");
         if (request.CustomerCardId == Guid.Empty)
@@ -17,6 +16,12 @@ public static class PaymentValidation
         if (request.CurrencyCode is not { Length: 3 }
             || !request.CurrencyCode.All(character => character is >= 'A' and <= 'Z'))
             throw Invalid("CurrencyCode must contain three uppercase ISO currency-code letters.");
+    }
+
+    public static void ValidateAppPaymentId(string? appPaymentId)
+    {
+        if (string.IsNullOrWhiteSpace(appPaymentId))
+            throw Invalid("AppPaymentId is required.");
     }
 
     private static PaymentRequestException Invalid(string message) => new(400, "invalid_payment", message);

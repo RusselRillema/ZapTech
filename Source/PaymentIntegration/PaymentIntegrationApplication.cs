@@ -12,7 +12,7 @@ public static class PaymentIntegrationApplication
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddSingleton(TimeProvider.System);
-        // Resolve external configuration only when a payment is submitted; health remains independent.
+        // Resolve external configuration only when needed; health remains independent.
         builder.Services.AddSingleton(provider => AcmeSettings.Read(provider.GetRequiredService<IConfiguration>()));
         builder.Services.AddSingleton(provider =>
         {
@@ -43,6 +43,7 @@ public static class PaymentIntegrationApplication
         builder.Services.AddSingleton<AcmeRequestFactory>();
         builder.Services.AddScoped<PaymentResponseProcessor>();
         builder.Services.AddScoped<PaymentService>();
+        builder.Services.AddScoped<PaymentStatusService>();
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -55,6 +56,17 @@ public static class PaymentIntegrationApplication
                 detail: "Retry using the same AppPaymentId.").ExecuteAsync(context);
         }));
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+        app.MapGet("/payments", async (string appPaymentId, PaymentStatusService service, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await service.GetAsync(appPaymentId, cancellationToken));
+            }
+            catch (PaymentRequestException exception)
+            {
+                return Results.Problem(statusCode: exception.StatusCode, title: exception.Code, detail: exception.Message);
+            }
+        });
         app.MapPost("/payments", async (NewPaymentRequest request, PaymentService service, CancellationToken cancellationToken) =>
         {
             try
