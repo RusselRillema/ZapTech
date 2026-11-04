@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 Acme Pay stub and PostgreSQL 18 bootstrap for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). PaymentIntegration, application tables/procedures, seeds and reporting remain unfinished.
+.NET 8 Acme Pay stub and PostgreSQL 18 bootstrap with seeded customer, sub-merchant and card tables for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). PaymentIntegration, payment lifecycle tables, procedures and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -27,7 +27,7 @@ Using your existing privileged `psql` connection, outside a transaction, run:
 \i Source/PaymentIntegration/Database/setup.sql
 ```
 
-The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
+The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It includes separate table and seed scripts, loading five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
 
 For removal, stop application connections first, then explicitly run:
 
@@ -75,4 +75,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-Database runtime validation remains paused. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.
+Docker startup, initial table creation and sample seeding were verified on Linux. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.
