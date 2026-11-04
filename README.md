@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 payment submission, status and Payment Advice service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Reversal/refund callbacks, RTTQ reconciliation and reporting remain unfinished.
+.NET 8 payment submission, status and Payment Advice service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Reversal/refund callbacks, further reconciliation and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -68,11 +68,13 @@ Send JSON to `POST http://127.0.0.1:5080/payments`:
 }
 ```
 
-Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window. Timeouts, connection failures and 500–504 mean Unresolved. Identical repeats return the saved payment without another Acme submission; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Reconciliation is deferred.
+Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window.
+
+Timeouts, connection failures and 500–504 leave the outcome unknown. If submission remains unresolved and time remains, the service makes one Real Time Transaction Query (RTTQ) using the same transaction ID, allowing up to 10 seconds within that 60-second window. RTTQ can establish an Approved or Declined outcome during the same request; inconclusive results remain Unresolved for later reconciliation. Identical repeats return the saved payment without another Acme call; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Further reconciliation is deferred.
 
 Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` is true only for Approved, Declined or Failed payments with no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
 
-Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending for the separate RTTQ/submission work.
+Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending until a submission or RTTQ response supplies it; otherwise later reconciliation is required.
 
 ## Acme operation
 

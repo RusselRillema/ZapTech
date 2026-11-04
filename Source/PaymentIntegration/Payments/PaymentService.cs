@@ -95,12 +95,32 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 }
 
                 operation = "payment event transaction";
-                payment = await ProcessResponseAsync(payment.PaymentId, eventId, receipt, retrying);
+                payment = await ProcessEventAsync(payment.PaymentId, eventId, receipt, retrying);
 
                 if (!retrying
                     || payment.State != "Unresolved"
                     || retryDelay is not { } wait)
                 {
+                    remaining = processingWindow - clock.GetElapsedTime(startedAt);
+                    if (payment.State == "Unresolved" && response.RequestAttempted
+                        && remaining > TimeSpan.Zero && !token.IsCancellationRequested)
+                    {
+                        // The previous processing session has committed and disposed before network recovery.
+                        // Neither the shared deadline nor the original payment identity is reset for RTTQ.
+                        var queryWindow = remaining < TimeSpan.FromSeconds(10) ? remaining : TimeSpan.FromSeconds(10);
+                        using var queryTimeout = new CancellationTokenSource(queryWindow, clock);
+                        using var queryCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, queryTimeout.Token);
+                        eventId = Guid.NewGuid();
+                        operation = "Acme transaction query";
+                        var query = await acme.QueryAsync(payment.PaymentId, queryCancellation.Token);
+                        var queryReceipt = new PaymentEvent(eventId, payment.PaymentId, "TransactionQuery",
+                            query.Payload, query.HttpStatusCode, clock.GetUtcNow(), ProcessingComment: query.Failure);
+
+                        operation = "transaction query event transaction";
+                        // Reload the locked persisted payment; callbacks may have changed it during RTTQ.
+                        payment = await ProcessEventAsync(payment.PaymentId, eventId, queryReceipt, false);
+                    }
+
                     return PaymentResult.FromPayment(payment);
                 }
 
@@ -109,7 +129,7 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 if (wait >= remaining || token.IsCancellationRequested)
                 {
                     operation = "E29 deadline finalization";
-                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    payment = await ProcessEventAsync(payment.PaymentId, eventId, null, false);
                     return PaymentResult.FromPayment(payment);
                 }
 
@@ -127,14 +147,14 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
                     operation = "E29 deadline finalization";
-                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    payment = await ProcessEventAsync(payment.PaymentId, eventId, null, false);
                     return PaymentResult.FromPayment(payment);
                 }
 
                 if (token.IsCancellationRequested || clock.GetElapsedTime(startedAt) >= processingWindow)
                 {
                     operation = "E29 deadline finalization";
-                    payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
+                    payment = await ProcessEventAsync(payment.PaymentId, eventId, null, false);
                     return PaymentResult.FromPayment(payment);
                 }
 
@@ -150,7 +170,7 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
         }
     }
 
-    private async Task<Payment> ProcessResponseAsync(
+    private async Task<Payment> ProcessEventAsync(
         Guid paymentId,
         Guid eventId,
         PaymentEvent? receipt,

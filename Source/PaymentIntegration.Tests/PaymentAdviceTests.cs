@@ -70,12 +70,14 @@ public sealed class PaymentAdviceTests
         Assert.Equal("Pending", Assert.Single(flow.Events).ProcessingState);
     }
 
-    [Fact]
-    public async Task A_later_payment_response_reconsiders_earlier_approval_advice_using_AuthAmount()
+    [Theory]
+    [InlineData("PaymentResponse")]
+    [InlineData("TransactionQuery")]
+    public async Task A_later_payment_or_query_response_reconsiders_earlier_approval_advice_using_AuthAmount(string source)
     {
         var flow = new Flow();
         await flow.Service.ReceiveAsync(Advice(code: "00"));
-        var response = new PaymentEvent(Guid.NewGuid(), PaymentId, "PaymentResponse",
+        var response = new PaymentEvent(Guid.NewGuid(), PaymentId, source,
             JsonSerializer.SerializeToElement(new
             {
                 PaymentResponse = new
@@ -95,7 +97,7 @@ public sealed class PaymentAdviceTests
         Assert.Equal(1250, flow.SavedPayment.RemainingAmount);
         Assert.False(flow.SavedPayment.HasPendingEvents);
         Assert.Equal("Ignored", flow.Events.Single(item => item.Source == "PaymentAdvice").ProcessingState);
-        Assert.Equal("Applied", flow.Events.Single(item => item.Source == "PaymentResponse").ProcessingState);
+        Assert.Equal("Applied", flow.Events.Single(item => item.Source == source).ProcessingState);
     }
 
     [Fact]

@@ -13,9 +13,11 @@ public sealed record AcmeReply(
     short? HttpStatusCode,
     JsonElement? Payload,
     string? Failure = null,
-    TimeSpan? RetryDelay = null);
+    TimeSpan? RetryDelay = null,
+    bool RequestAttempted = true);
 
 public interface IAcmePaymentClient
 {
     Task<AcmeReply> SubmitAsync(AcmeEnvelope request, CancellationToken cancellationToken);
+    Task<AcmeReply> QueryAsync(Guid paymentId, CancellationToken cancellationToken);
 }
