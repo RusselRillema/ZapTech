@@ -403,27 +403,59 @@ public sealed class PaymentServiceTests
             Repository.Setup(repository => repository.GetDetailsAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PaymentDetails("sensitive-card-token", "customer@example.com", "COFFEE", "CAPE TOWN", "WC", "ZA", "5812"));
             Repository.Setup(repository => repository.CreateAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Payment payment, CancellationToken _) => { Calls.Add("create"); Created = payment; return new(true, payment); });
+                .ReturnsAsync((Payment payment, CancellationToken _) =>
+                {
+                    Calls.Add("create");
+                    Created = payment;
+                    return new(true, payment);
+                });
             Repository.Setup(repository => repository.BeginProcessingAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => { Calls.Add("lock"); return Session.Object; });
+                .ReturnsAsync(() =>
+                {
+                    Calls.Add("lock");
+                    return Session.Object;
+                });
             Client.Setup(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((AcmeEnvelope envelope, CancellationToken _) => { Calls.Add("send"); return Reply(envelope); });
+                .ReturnsAsync((AcmeEnvelope envelope, CancellationToken _) =>
+                {
+                    Calls.Add("send");
+                    return Reply(envelope);
+                });
             Session.SetupGet(session => session.Payment).Returns(() => Created!);
             Session.Setup(session => session.InsertEventAsync(It.IsAny<PaymentEvent>(), It.IsAny<CancellationToken>()))
-                .Callback((PaymentEvent receipt, CancellationToken _) => { Calls.Add("insert"); Events.Add(receipt); }).Returns(Task.CompletedTask);
+                .Callback((PaymentEvent receipt, CancellationToken _) =>
+                {
+                    Calls.Add("insert");
+                    Events.Add(receipt);
+                })
+                .Returns(Task.CompletedTask);
             Session.Setup(session => session.GetPendingEventsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => { Calls.Add("read_pending"); return Events; });
+                .ReturnsAsync(() =>
+                {
+                    Calls.Add("read_pending");
+                    return Events;
+                });
             Session.Setup(session => session.SavePaymentAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()))
-                .Callback((Payment payment, CancellationToken _) => { Calls.Add("save_payment"); SavedPayment = payment; }).Returns(Task.CompletedTask);
+                .Callback((Payment payment, CancellationToken _) =>
+                {
+                    Calls.Add("save_payment");
+                    SavedPayment = payment;
+                })
+                .Returns(Task.CompletedTask);
             Session.Setup(session => session.SaveEventAsync(It.IsAny<PaymentEvent>(), It.IsAny<CancellationToken>()))
-                .Callback((PaymentEvent receipt, CancellationToken _) => { Calls.Add("save_event"); SavedEvents.Add(receipt); }).Returns(Task.CompletedTask);
+                .Callback((PaymentEvent receipt, CancellationToken _) =>
+                {
+                    Calls.Add("save_event");
+                    SavedEvents.Add(receipt);
+                })
+                .Returns(Task.CompletedTask);
             Session.Setup(session => session.CommitAsync(It.IsAny<CancellationToken>()))
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(session => session.DisposeAsync()).Callback(() => Calls.Add("dispose")).Returns(ValueTask.CompletedTask);
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
                     TimeProvider.System, new FnbCardAcceptorNameFormatter()),
-                TimeProvider.System, NullLogger<PaymentService>.Instance);
+                new PaymentResponseProcessor(), TimeProvider.System, NullLogger<PaymentService>.Instance);
         }
 
         public Payment ExistingPayment(string state) => new(Guid.NewGuid(), Request.AppPaymentId!, Request.CustomerId!,

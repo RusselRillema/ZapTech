@@ -4,11 +4,15 @@ using PaymentIntegration.Acme;
 namespace PaymentIntegration.Payments;
 
 public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentClient acme,
-    AcmeRequestFactory requestFactory, TimeProvider clock, ILogger<PaymentService> logger)
+    AcmeRequestFactory requestFactory, PaymentResponseProcessor responseProcessor,
+    TimeProvider clock, ILogger<PaymentService> logger)
 {
     public async Task<PaymentResult> SubmitAsync(NewPaymentRequest request, CancellationToken cancellationToken)
     {
-        try { PaymentValidation.Validate(request); }
+        try
+        {
+            PaymentValidation.Validate(request);
+        }
         catch (PaymentRequestException exception)
         {
             logger.LogWarning("Payment validation failed: {Reason}", exception.Message);
@@ -17,7 +21,10 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
 
         logger.LogInformation("Received app payment {AppPaymentId}", request.AppPaymentId);
         var existing = await repository.GetByAppIdAsync(request.AppPaymentId!, cancellationToken);
-        if (existing is not null) return Existing(existing, request);
+        if (existing is not null)
+        {
+            return Existing(existing, request);
+        }
 
         var details = await repository.GetDetailsAsync(request.CustomerId!, request.CustomerCardId,
             request.SubMerchantId!, cancellationToken);
@@ -32,14 +39,20 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
             request.CustomerCardId, request.SubMerchantId!, Convert.ToHexString(RandomNumberGenerator.GetBytes(6)),
             request.CurrencyCode!, request.Amount, "Unresolved", clock.GetUtcNow());
         AcmeEnvelope envelope;
-        try { envelope = requestFactory.Create(payment, details); }
+        try
+        {
+            envelope = requestFactory.Create(payment, details);
+        }
         catch (PaymentRequestException exception)
         {
             logger.LogWarning("Acme request validation failed for app payment {AppPaymentId}: {Reason}", request.AppPaymentId, exception.Message);
             throw;
         }
         var creation = await repository.CreateAsync(payment, cancellationToken);
-        if (!creation.Created) return Existing(creation.Payment, request);
+        if (!creation.Created)
+        {
+            return Existing(creation.Payment, request);
+        }
 
         using var scope = logger.BeginScope(new Dictionary<string, object> { ["PaymentId"] = payment.PaymentId });
         logger.LogInformation("Created payment {PaymentId} for app payment {AppPaymentId}", payment.PaymentId, payment.AppPaymentId);
@@ -66,8 +79,14 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 applied = false;
                 for (var index = 0; index < pending.Length; index++)
                 {
-                    if (pending[index].ProcessingState != "Pending") continue;
-                    (payment, pending[index]) = PaymentResponseProcessor.Process(payment, pending[index], clock.GetUtcNow());
+                    if (pending[index].ProcessingState != "Pending")
+                    {
+                        continue;
+                    }
+
+                    var result = responseProcessor.Process(payment, pending[index], clock.GetUtcNow());
+                    payment = result.Payment;
+                    pending[index] = result.Event;
                     applied |= pending[index].ProcessingState == "Applied";
                 }
             } while (applied);
@@ -77,7 +96,10 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 HasPendingEvents = pending.Any(item => item.ProcessingState == "Pending")
             };
             await session.SavePaymentAsync(payment, token);
-            foreach (var item in pending) await session.SaveEventAsync(item, token);
+            foreach (var item in pending)
+            {
+                await session.SaveEventAsync(item, token);
+            }
             await session.CommitAsync(token);
             logger.LogInformation("Payment {PaymentId}, event {PaymentEventId} processed; state {PaymentState}, pending {HasPendingEvents}",
                 payment.PaymentId, eventId, payment.State, payment.HasPendingEvents);

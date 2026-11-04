@@ -22,6 +22,7 @@ public static class PaymentIntegrationApplication
                 throw new InvalidOperationException("Set the PAYMENT_DATABASE_CONNECTION_STRING environment variable.");
             var dataSource = new NpgsqlDataSourceBuilder(connectionString);
             dataSource.ConnectionStringBuilder.IncludeErrorDetail = false;
+            dataSource.MapComposite<PaymentEventRow>("public.payment_event_result");
             return dataSource.Build();
         });
         builder.Services.AddSingleton(_ => new ConcurrencyLimiter(new ConcurrencyLimiterOptions
@@ -39,6 +40,7 @@ public static class PaymentIntegrationApplication
         builder.Services.AddSingleton<IPaymentRepository, PaymentRepository>();
         builder.Services.AddSingleton<ICardAcceptorNameFormatter, FnbCardAcceptorNameFormatter>();
         builder.Services.AddSingleton<AcmeRequestFactory>();
+        builder.Services.AddScoped<PaymentResponseProcessor>();
         builder.Services.AddScoped<PaymentService>();
         configure?.Invoke(builder);
 

@@ -32,8 +32,6 @@ Using your existing privileged `psql` connection, outside a transaction, run:
 
 The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It creates catalogue, payment and event tables plus payment procedures, and seeds five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
 
-An existing database must already have the current payment/event table schema. Deploy `Source/PaymentIntegration/Database/003_PaymentProcedures.sql` as the object owner with `psql --single-transaction --file=Source/PaymentIntegration/Database/003_PaymentProcedures.sql`, using your existing administrator connection settings. Restarting Compose does not deploy changes to existing volumes.
-
 For removal, stop application connections first, then explicitly run:
 
 ```text
