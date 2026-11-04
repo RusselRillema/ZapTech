@@ -12,7 +12,7 @@ The shared setup includes catalogue, payment and event tables, seed data and pay
 
 Single-record reads return explicit typed output columns. The small pending-event collection returns an array of the explicit `payment_event_result` type, mapped by Npgsql. Only Acme's variable audit payload remains JSONB. Every DAL command is a named procedure call; no cursor commands are needed. Permissions are configured centrally in `setup.sql`.
 
-Compose has independent Acme and database services with loopback publishing. A persistent volume retains PostgreSQL data; a thin first-start initializer invokes the shared setup file. Removal SQL is mounted outside the automatic initialization directory. The authenticated application-login health check proves connectivity and credentials, not future procedure correctness.
+Compose starts PaymentIntegration, Acme and PostgreSQL with loopback publishing. PaymentIntegration waits for database and Acme health; callbacks use Compose service DNS without going through the host. Non-root application images provide an HTTP liveness probe using their existing .NET runtime. A persistent volume retains PostgreSQL data; a thin first-start initializer invokes the shared setup file. Removal SQL is mounted outside the automatic initialization directory. The authenticated application-login health check proves connectivity and credentials, not procedure correctness. The Docker environment example supplies separate host ports and internal service addresses.
 
 ## Payment submission
 

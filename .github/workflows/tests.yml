@@ -28,3 +28,26 @@ jobs:
 
       - name: Test
         run: dotnet test ZenTech.sln --configuration Release --no-build --no-restore
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: zentech-ci
+      POSTGRES_PASSWORD: local_ci_bootstrap_only
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Validate Compose configuration
+        run: docker compose --env-file .env.docker.example config --quiet
+
+      - name: Build and start the application stack
+        run: docker compose --env-file .env.docker.example up --build --wait --wait-timeout 180
+
+      - name: Application logs
+        if: always()
+        run: docker compose --env-file .env.docker.example logs --no-color --tail=100 db acme payments
+
+      - name: Remove this CI stack
+        if: always()
+        run: docker compose --env-file .env.docker.example down --volumes

@@ -11,7 +11,7 @@ Run commands from the repository root. Native database deployment uses your exis
 | Native database | `psql --version` (18.x); existing privileged connection | Run the setup script below. |
 | Native Acme | `dotnet --list-sdks`, `dotnet --list-runtimes`; .NET 8 SDK and runtimes | `dotnet run --project Source/AcmePay.Stub` |
 | Native PaymentIntegration | .NET 8 SDK and runtimes | `dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080` |
-| Compose | `docker --version`, `docker compose version`, `docker info` | `docker compose up --build -d` |
+| Compose (all three services) | `docker --version`, `docker compose version`, `docker info` | `docker compose up --build --wait` |
 | Existing tests | .NET 8 SDK, or Docker | Commands below; no running services or credentials needed. |
 
 Install missing software using the official [PostgreSQL](https://www.postgresql.org/download/), [.NET](https://dotnet.microsoft.com/download/dotnet/8.0) or [Docker](https://docs.docker.com/get-started/get-docker/) instructions. Container startup needs no host PostgreSQL or .NET installation.
@@ -20,7 +20,7 @@ Copy [env.local.example](env.local.example) (native) or [.env.docker.example](.e
 
 Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
 
-PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose currently runs only Acme and the database; run PaymentIntegration natively with the native environment settings.
+PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose starts `payments`, `acme` and `db` together; host HTTP ports default to 5080 and 5081.
 
 ## Database setup and removal
 
@@ -44,12 +44,14 @@ Only the application database and login are removed; the server and other databa
 
 ```text
 docker compose config --quiet
-docker compose up --build -d
+docker compose up --build --wait
 docker compose ps
-docker compose logs --tail=100 db acme
+docker compose logs --tail=100 db acme payments
 ```
 
 For one service, use `docker compose up -d db` or `docker compose up --build -d acme`; each can start without the other's credentials. Database access defaults to `127.0.0.1:5432` on the host and `db:5432` inside Compose. Docker's initializer runs the same setup SQL after creating the server. Its authenticated health check runs inside the database container and reads no application tables.
+
+PaymentIntegration waits for the database's authenticated health check and Acme's HTTP health check. Both application containers run as the non-root .NET `app` user on port 8080; their `--health-check` command probes the existing liveness endpoint. Liveness does not prove payment processing or schema compatibility. Compose callbacks use `http://payments:8080`, outgoing Acme calls use `http://acme:8080`, and database calls use `db:5432`. Use the Docker environment example when all services run in containers; native host addresses are different. The Transaction Status URL is configured for step 6, whose receiver remains unfinished.
 
 Stop/remove containers with `docker compose down`; the database volume persists. **`docker compose down --volumes` deletes the project database volume.** Initialization runs only on empty storage. A failed setup may leave partial initialization: inspect logs and repair as administrator, or explicitly remove a disposable volume. Restart does not resume setup. Existing databases require explicit future schema deployment; these scripts are not migrations.
 
@@ -78,9 +80,9 @@ Payment Advice is received at `POST /notifications/payment-advice`, matching the
 
 ## Acme operation
 
-Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions, scenario configuration and callbacks.
+Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Compose fixes application listeners to port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081) and `PAYMENT_HTTP_PORT` (default 5080). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions, scenario configuration and callbacks.
 
-Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. PaymentIntegration receives Payment Advice; the Transaction Status receiver remains deferred.
+Native callbacks use `localhost`; callbacks between Compose services use the `payments` service name. For a mixed setup with a host receiver, explicitly use `host.docker.internal` and bind that receiver to an address reachable from containers. PaymentIntegration receives Payment Advice; the Transaction Status receiver remains deferred.
 
 Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
 
