@@ -9,6 +9,10 @@
 7. Store AI-created lists, progress files, decision documents, and similar artifacts in the repository's `/Docs` directory. Prompt the user and obtain approval before creating any such file.
 8. When the user asked to add something to the TODO list, it should be added to /Docs/TODO.md. This file is for todo notes for the user and should not be modified by agents unless explicitly asked. Notes should be short points of items that we need to come back to.
 9. When the user asked to add something to the notes list, it should be added to /Docs/Notes.md. This file is for general notes and assumptions for the user and should not be modified by agents unless explicitly asked.
+10. All database operations performed by the service must go through stored procedures called with named parameters.
+11. Business logic and calculations belong in testable C# application code.
+12. Use tests only to verify functional application operations and their observable behavior.
+13. All database interactions must be safe under concurrent calls and multiple running container instances. Stored procedures that transition state must atomically validate the current persisted state and apply only permitted transitions, preventing stale or concurrent requests from moving it to an older state.
 
 ## Additional Paths and Links
 
