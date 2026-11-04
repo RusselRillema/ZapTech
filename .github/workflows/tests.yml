@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.1.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore ZenTech.sln
+
+      - name: Build
+        run: dotnet build ZenTech.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test ZenTech.sln --configuration Release --no-build --no-restore
