@@ -1,79 +1,78 @@
 # Zapper Assessment
 
-.NET 8 Acme Pay stub for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). The payment integration service, database and reporting are not implemented yet.
+.NET 8 Acme Pay stub and PostgreSQL 18 bootstrap for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). PaymentIntegration, application tables/procedures, seeds and reporting remain unfinished.
 
 ## Choose a startup mode
 
-Run commands from the repository root. The commands below work in Windows PowerShell, macOS and Linux terminals; Docker uses Linux containers. Acme and its tests do not require PostgreSQL.
+Run commands from the repository root. Native database deployment uses your existing PostgreSQL server and administrator connection; Acme and its tests need no database.
 
-| Mode | Prerequisite checks | Configuration example |
+| Product / mode | Quick prerequisites | Start |
 | --- | --- | --- |
-| Native | `dotnet --list-sdks` and `dotnet --list-runtimes`: confirm the .NET 8 SDK, `Microsoft.NETCore.App 8.x` and `Microsoft.AspNetCore.App 8.x`. | [env.local.example](env.local.example) |
-| Docker Compose | `docker --version`, `docker compose version` and `docker info`: confirm the CLI, Compose plugin and accessible engine. | [.env.docker.example](.env.docker.example) |
+| Native database | `psql --version` (18.x); existing privileged connection | Run the setup script below. |
+| Native Acme | `dotnet --list-sdks`, `dotnet --list-runtimes`; .NET 8 SDK and runtimes | `dotnet run --project Source/AcmePay.Stub` |
+| Compose | `docker --version`, `docker compose version`, `docker info` | `docker compose up --build -d` |
+| Existing tests | .NET 8 SDK, or Docker | Commands below; no running services or credentials needed. |
 
-Install missing prerequisites using the official [.NET](https://dotnet.microsoft.com/download/dotnet/8.0) or [Docker](https://docs.docker.com/get-started/get-docker/) instructions for your OS. Native startup needs no Docker; container startup needs no host .NET installation.
+Install missing software using the official [PostgreSQL](https://www.postgresql.org/download/), [.NET](https://dotnet.microsoft.com/download/dotnet/8.0) or [Docker](https://docs.docker.com/get-started/get-docker/) instructions. Container startup needs no host PostgreSQL or .NET installation.
 
-Using your editor or file manager, copy the selected example to `.env` in the repository root and replace the example credentials and callback URLs. Preserve your customised values when switching modes. Keep `.env` private; it is ignored by Git and Docker builds. Single-quote values containing literal `$` or `#`, such as `ACME_ADVICE_PASSWORD='local$example#value'`.
+For Acme, copy [env.local.example](env.local.example) (native) or [.env.docker.example](.env.docker.example) (containers) to root `.env` using your editor/file manager. Preserve customised files; replace example Acme credentials and callback URLs. For Docker's database, also set `POSTGRES_PASSWORD`; `POSTGRES_USER` defaults to `postgres` and `POSTGRES_PORT` to `5432`.
 
-Acme loads `.env` before startup without replacing existing environment variables. Compose also gives existing shell variables precedence over `.env`. In AWS, supply the environment variables directly; the file is optional.
+Acme loads optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
 
-## Run natively
+## Database setup and removal
+
+Using your existing privileged `psql` connection, outside a transaction, run:
 
 ```text
-dotnet run --project Source/AcmePay.Stub
+\i Source/PaymentIntegration/Database/setup.sql
 ```
 
-`ASPNETCORE_URLS` in `.env` controls the listening address. Stop with Ctrl+C.
+The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
 
-## Run with Docker Compose
+For removal, stop application connections first, then explicitly run:
+
+```text
+\i Source/PaymentIntegration/Database/remove.sql
+```
+
+Only the application database and login are removed; the server and other databases remain. The scripts use psql commands and work from Windows, macOS and Linux terminals with an already configured connection.
+
+## Docker Compose
 
 ```text
 docker compose config --quiet
-docker compose up --build -d acme
+docker compose up --build -d
 docker compose ps
-docker compose logs --tail=100 acme
+docker compose logs --tail=100 db acme
 ```
 
-`ACME_HTTP_PORT` sets the host port (default 5081); keep the Docker example's internal listening port at 8080. Stop and remove the container and its network with:
+For one service, use `docker compose up -d db` or `docker compose up --build -d acme`; each can start without the other's credentials. Database access defaults to `127.0.0.1:5432` on the host and `db:5432` inside Compose. Docker's initializer runs the same setup SQL after creating the server. Its authenticated health check runs inside the database container and reads no application tables.
 
-```text
-docker compose down
-```
+Stop/remove containers with `docker compose down`; the database volume persists. **`docker compose down --volumes` deletes the project database volume.** Initialization runs only on empty storage. A failed setup may leave partial initialization: inspect logs and repair as administrator, or explicitly remove a disposable volume. Restart does not resume setup. Existing databases require explicit future schema deployment; these scripts are not migrations.
 
-Both modes default to [http://localhost:5081/health](http://localhost:5081/health); open it to confirm the response is `{"status":"healthy"}`. Adjust the URL if you change the port. Restarting clears transactions and pending callbacks.
+## Acme operation
 
-For callbacks to a receiver on your host, native mode uses `localhost`; Docker uses `host.docker.internal`. Compose includes the Linux host-gateway mapping. The receiver must listen on an address reachable from the container; Linux containers cannot reach a host listener bound only to loopback. A callback receiver is not supplied by this stub.
+Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions and queued callbacks.
 
-## API
+Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. No receiver is supplied.
 
-Payment and query payloads follow Appendix A. Both require `Authorization: Bearer <ACME_API_KEY>`.
+Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
 
 - `POST /api/payment`
 - `GET /apirttq/query/Merchant/{MerchantID}?TransactionID={id}` (or `OrderNumber={reference}`)
 
-With `ACME_ENABLE_CONTROLS=true`, these bearer-protected routes send full-amount status callbacks using a body such as `{"Amount":1999}`:
+With `ACME_ENABLE_CONTROLS=true`, bearer-protected `POST /__stub/transactions/{id}/reversal` and `POST /__stub/transactions/{id}/refund` send full-amount status callbacks using a body such as `{"Amount":1999}`. Payment Advice uses Basic authentication; status callbacks use Base64 HMAC-SHA256 over the exact body bytes in `x-signature`. Valid payments are approved; partial events are unsupported.
 
-- `POST /__stub/transactions/{id}/reversal`
-- `POST /__stub/transactions/{id}/refund`
-
-Payment Advice uses the configured Basic credentials. Status webhooks carry a Base64 HMAC-SHA256 signature of the exact body bytes in `x-signature`.
-
-Valid payments are approved. Partial events are unsupported.
-
-## Tests
-
-The existing tests start their own stub and HTTP callback receiver; they need no `.env` or separately running services. With the .NET 8 SDK:
+## Tests and verification
 
 ```text
 dotnet test ZenTech.sln --configuration Release
 ```
 
-Alternatively, after the Docker prerequisite checks, run the same suite in a temporary SDK container:
+Or run the same suite in a temporary SDK container, without a local .NET installation:
 
 ```text
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-Source is mounted read-only; build artifacts and test results stay inside the temporary container.
-
-See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred scenarios.
+Database runtime validation remains paused. See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred stub scenarios.
