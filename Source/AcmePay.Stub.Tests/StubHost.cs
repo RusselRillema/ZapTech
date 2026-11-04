@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AcmePay.Stub.Tests;
 
@@ -17,8 +18,28 @@ internal sealed record CapturedCallback(string Path, byte[] Body, string Authori
 
 internal sealed class TestClock : TimeProvider
 {
-    public DateTimeOffset Now { get; set; } = new(2026, 3, 1, 11, 56, 36, 533, TimeSpan.Zero);
-    public override DateTimeOffset GetUtcNow() => Now;
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 3, 1, 11, 56, 36, 533, TimeSpan.Zero));
+    private readonly Channel<TimeSpan> _timers = Channel.CreateUnbounded<TimeSpan>();
+
+    public DateTimeOffset Now { get => _clock.GetUtcNow(); set => _clock.SetUtcNow(value); }
+    public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+    public override long GetTimestamp() => _clock.GetTimestamp();
+    public override long TimestampFrequency => _clock.TimestampFrequency;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        var timer = _clock.CreateTimer(callback, state, dueTime, period);
+        _timers.Writer.TryWrite(dueTime);
+        return timer;
+    }
+
+    public void Advance(TimeSpan elapsed) => _clock.Advance(elapsed);
+
+    public async Task WaitForTimerAsync(TimeSpan dueTime)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (await _timers.Reader.ReadAsync(timeout.Token) != dueTime) { }
+    }
 }
 
 internal sealed class StubHost : IAsyncDisposable
@@ -64,7 +85,6 @@ internal sealed class StubHost : IAsyncDisposable
             var receiverUrl = host._receiver.Urls.Single();
             host._stub = StubApplication.Build([], builder =>
             {
-                builder.WebHost.UseUrls("http://127.0.0.1:0");
                 builder.Logging.ClearProviders();
                 builder.Configuration.Sources.Clear();
                 builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -78,6 +98,8 @@ internal sealed class StubHost : IAsyncDisposable
                     ["ACME_WEBHOOK_SECRET"] = Secret,
                     ["ACME_ENABLE_CONTROLS"] = enableControls.ToString()
                 });
+                // Set the ephemeral listener after replacing configuration sources.
+                builder.WebHost.UseUrls("http://127.0.0.1:0");
                 builder.Services.AddSingleton<TimeProvider>(host.Clock);
             });
             await host._stub.StartAsync();

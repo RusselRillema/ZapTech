@@ -30,7 +30,9 @@ The Acme client reuses pooled HTTP connections, bounds concurrent calls to 20 wi
 
 ## Acme design and configuration
 
-The .NET 8 Minimal API runs natively or in a non-root container. In-memory storage keeps the supporting stub small: concurrent submissions replay the original outcome for 24 hours, RRNs remain reserved until restart, and queries reflect reversals/refunds. Valid payments are approved; optional controls support full reversals/refunds. Partial outcomes and further simulations are deferred.
+The .NET 8 Minimal API runs natively or in a non-root container. In-memory storage keeps the supporting stub small: concurrent submissions replay the original outcome for 24 hours, RRNs remain reserved until restart, and queries reflect reversals/refunds. Valid payments are approved by default. Optional bearer-protected demo controls select approval or acquirer decline (`05`), delay initial replies and hold callbacks. These defaults apply to new payments in a dedicated, sequentially operated demo stub; accepted transactions retain one immutable scenario. A delayed reply models an accepted payment whose response arrives late or is lost, with its outcome immediately available through RTTQ. Submission-time RTTQ can therefore recover the outcome before the service returns; further reconciliation remains unfinished.
+
+Each transaction retains the exact generated callback bytes and identity. Controls can queue held callbacks in a chosen order or replay them through the existing authenticated dispatcher without applying the underlying reversal/refund again. Existing full reversal/refund controls remain available; partial outcomes are deferred. Reading scenario configuration, callback lists or RTTQ does not release deliveries or reconcile payments. Restart loses all demo state.
 
 A bounded callback queue and one worker reuse HTTP connections. Attempts time out after ten seconds; failures receive three retries, one second apart, preserving bytes and event identity. Shutdown drains accepted work until the host deadline; restart loses transactions and queued callbacks.
 
@@ -38,7 +40,7 @@ DotNetEnv loads an optional repository-root `.env` before native host creation w
 
 ## Validation and AI workflow
 
-The current Release suite passes on Linux, including service tests with mocked DAL/Acme dependencies, HTTP contract/error tests and the existing Acme tests. These verify application behavior without a database. The new procedure deployment, output mapping, privileges, row locking and database transactions remain unverified against PostgreSQL; full end-to-end verification is deferred to step 6. No database fixtures or substitute database harnesses are used.
+The Release suite covers service tests with mocked DAL/Acme dependencies, HTTP contract/error tests and Acme HTTP/callback tests. Scenario coverage checks decline consistency, unchanged transaction replay after configuration updates, callback ordering and authenticated replay, invalid configuration, access controls and delayed/lost replies. An observed controlled clock advances response delays without real-time waits; independent ephemeral listeners allow stub tests to run concurrently. These verify application behavior without a database. The new procedure deployment, output mapping, privileges, row locking and database transactions remain unverified against PostgreSQL; full end-to-end verification is deferred to step 6. No database fixtures or substitute database harnesses are used.
 
 Earlier bootstrap work verified Docker startup and the actual catalogue setup/seed scripts on Linux. That historical verification does not cover the current payment tables and procedures. Native deployment, removal SQL, restart persistence and Windows/macOS execution remain unverified.
 
@@ -46,4 +48,4 @@ Codex used the assignment, repository, related startup discussion and official d
 
 ## Remaining deliverables
 
-Reversal/refund processing, further reconciliation, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Deferred stub scenarios are listed in [Docs/TODO.md](Docs/TODO.md).
+Reversal/refund processing, further reconciliation, the demo runner, daily reporting, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Further stub simulations, including partial authorisations/refunds, remain deferred.

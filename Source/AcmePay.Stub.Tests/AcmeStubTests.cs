@@ -46,6 +46,10 @@ public sealed class AcmeStubTests
     [InlineData("/apirttq/query/Merchant/8B67BF88-BB8D-4EB5-ADFC-0F5C97C7ED67?TransactionID=attempt-1", "GET", null)]
     [InlineData("/apirttq/query/Merchant/8B67BF88-BB8D-4EB5-ADFC-0F5C97C7ED67?TransactionID=attempt-1", "GET", "Basic wrong")]
     [InlineData("/__stub/transactions/attempt-1/refund", "POST", "Bearer sk_test_wrong")]
+    [InlineData("/__stub/scenario", "POST", null)]
+    [InlineData("/__stub/scenario", "GET", "Bearer wrong")]
+    [InlineData("/__stub/transactions/attempt-1/callbacks", "GET", null)]
+    [InlineData("/__stub/transactions/attempt-1/callbacks/attempt-1/send", "POST", "Bearer wrong")]
     public async Task Missing_or_invalid_bearer_key_is_rejected_before_processing(string path, string method, string? authorization)
     {
         await using var host = await StubHost.StartAsync();
@@ -225,11 +229,18 @@ public sealed class AcmeStubTests
         Assert.Single(host.Deliveries);
     }
 
-    [Fact]
-    public async Task Local_triggers_are_absent_unless_enabled()
+    [Theory]
+    [InlineData("/__stub/transactions/attempt-1/refund", "POST")]
+    [InlineData("/__stub/transactions/attempt-1/reversal", "POST")]
+    [InlineData("/__stub/scenario", "POST")]
+    [InlineData("/__stub/scenario", "GET")]
+    [InlineData("/__stub/transactions/attempt-1/callbacks", "GET")]
+    [InlineData("/__stub/transactions/attempt-1/callbacks/attempt-1/send", "POST")]
+    public async Task Local_triggers_are_absent_unless_enabled(string path, string method)
     {
         await using var host = await StubHost.StartAsync(enableControls: false);
-        using var response = await host.Client.PostAsJsonAsync("/__stub/transactions/attempt-1/refund", new { Amount = 1999 });
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        using var response = await host.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 

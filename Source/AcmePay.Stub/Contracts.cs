@@ -87,7 +87,7 @@ public sealed record PaymentAdvice(
     string ResponseSource,
     string ResponseCode,
     string ResponseDescription,
-    string AuthCode,
+    string? AuthCode,
     string CommProtocol = "REST");
 
 public sealed record StatusEvent(

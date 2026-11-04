@@ -19,6 +19,7 @@ public static class StubApplication
         builder.WebHost.ConfigureKestrel(options => options.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(60));
         builder.Services.AddSingleton(settings);
         builder.Services.TryAddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<DemoScenarioState>();
         builder.Services.AddSingleton<PaymentStore>();
         builder.Services.AddSingleton<CallbackDispatcher>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<CallbackDispatcher>());
@@ -54,12 +55,18 @@ public static class StubApplication
 
         if (settings.EnableControls)
         {
-            var controls = app.MapGroup("/__stub/transactions");
+            var controls = app.MapGroup("/__stub");
             controls.AddEndpointFilter(new BearerFilter(settings, clock));
-            controls.MapPost("/{transactionId}/reversal", (string transactionId, HttpContext context, PaymentStore store) =>
+            controls.MapGet("/scenario", (DemoScenarioState scenarios) => Results.Ok(scenarios.Current));
+            controls.MapPost("/scenario", ConfigureScenarioAsync);
+            controls.MapPost("/transactions/{transactionId}/reversal", (string transactionId, HttpContext context, PaymentStore store) =>
                 SendStatusAsync(transactionId, "Reversal", context, store, clock));
-            controls.MapPost("/{transactionId}/refund", (string transactionId, HttpContext context, PaymentStore store) =>
+            controls.MapPost("/transactions/{transactionId}/refund", (string transactionId, HttpContext context, PaymentStore store) =>
                 SendStatusAsync(transactionId, "Refund", context, store, clock));
+            controls.MapGet("/transactions/{transactionId}/callbacks", (string transactionId, PaymentStore store) =>
+                store.GetCallbacks(transactionId));
+            controls.MapPost("/transactions/{transactionId}/callbacks/{identifier}/send",
+                (string transactionId, string identifier, PaymentStore store) => store.SendCallback(transactionId, identifier));
         }
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
         return app;
@@ -78,7 +85,24 @@ public static class StubApplication
             return Wire.Error(400, "E01", "The body could not be parsed.", clock);
         }
         var error = PaymentValidation.Error(envelope, settings);
-        return error is null ? store.Submit(envelope!) : Wire.Error(400, "E01", error, clock);
+        return error is null
+            ? await store.SubmitAsync(envelope!, context.RequestAborted)
+            : Wire.Error(400, "E01", error, clock);
+    }
+
+    private static async Task<IResult> ConfigureScenarioAsync(HttpContext context, DemoScenarioState scenarios)
+    {
+        try
+        {
+            var scenario = await JsonSerializer.DeserializeAsync<DemoScenario>(
+                context.Request.Body, ControlJson, context.RequestAborted);
+            var error = scenarios.Configure(scenario);
+            return error is null ? Results.NoContent() : Results.BadRequest(new { error });
+        }
+        catch (JsonException)
+        {
+            return Results.BadRequest(new { error = "The scenario body could not be parsed." });
+        }
     }
 
     private static async Task<IResult> SendStatusAsync(string transactionId, string type,
