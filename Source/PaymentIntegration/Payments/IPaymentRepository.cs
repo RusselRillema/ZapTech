@@ -10,7 +10,9 @@ public interface IPaymentRepository
         CancellationToken cancellationToken);
 }
 
-// All operations share one connection and transaction; linked events retain the payment row lock.
+// Operations within this processing session use one connection and transaction.
+// Each container creates its own sessions; PostgreSQL coordinates them through payment row locks.
+// For an existing payment, its row lock is held until this session's transaction ends.
 public interface IPaymentProcessingSession : IAsyncDisposable
 {
     Payment? Payment { get; }
