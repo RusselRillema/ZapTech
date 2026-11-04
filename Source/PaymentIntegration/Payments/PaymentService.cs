@@ -101,7 +101,7 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                     || payment.State != "Unresolved"
                     || retryDelay is not { } wait)
                 {
-                    return Result(payment);
+                    return PaymentResult.FromPayment(payment);
                 }
 
                 remaining = processingWindow - clock.GetElapsedTime(startedAt);
@@ -110,7 +110,7 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 {
                     operation = "E29 deadline finalization";
                     payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
-                    return Result(payment);
+                    return PaymentResult.FromPayment(payment);
                 }
 
                 logger.LogWarning(
@@ -128,14 +128,14 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 {
                     operation = "E29 deadline finalization";
                     payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
-                    return Result(payment);
+                    return PaymentResult.FromPayment(payment);
                 }
 
                 if (token.IsCancellationRequested || clock.GetElapsedTime(startedAt) >= processingWindow)
                 {
                     operation = "E29 deadline finalization";
                     payment = await ProcessResponseAsync(payment.PaymentId, eventId, null, false);
-                    return Result(payment);
+                    return PaymentResult.FromPayment(payment);
                 }
 
                 // A retry is a new message for the same persisted payment attempt.
@@ -232,10 +232,6 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
                 "AppPaymentId is already associated with different payment details.");
         }
         logger.LogInformation("Returning existing payment {PaymentId}, app payment {AppPaymentId}", payment.PaymentId, payment.AppPaymentId);
-        return Result(payment);
+        return PaymentResult.FromPayment(payment);
     }
-
-    private static PaymentResult Result(Payment payment) => new(payment.PaymentId, payment.AppPaymentId,
-        payment.State, payment.CurrencyCode, payment.RequestedAmount, payment.ApprovedAmount, payment.RemainingAmount,
-        payment.State is "Approved" or "Declined" or "Failed" && !payment.HasPendingEvents);
 }
