@@ -976,7 +976,7 @@ public sealed class PaymentServiceTests
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
                     clock, new CardAcceptorNameFormatterFactory(new FnbCardAcceptorNameFormatter())),
-                new PaymentEventService(Repository.Object, new PaymentResponseProcessor(), clock,
+                new PaymentEventService(Repository.Object, new PaymentResponseProcessor(), new TransactionStatusProcessor(), clock,
                     NullLogger<PaymentEventService>.Instance),
                 clock, NullLogger<PaymentService>.Instance);
         }

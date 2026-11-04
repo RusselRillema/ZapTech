@@ -493,7 +493,7 @@ public sealed class PaymentAdviceTests
             Session.Setup(value => value.CommitAsync(It.IsAny<CancellationToken>()))
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(value => value.DisposeAsync()).Returns(ValueTask.CompletedTask);
-            EventService = new(Repository.Object, new PaymentResponseProcessor(),
+            EventService = new(Repository.Object, new PaymentResponseProcessor(), new TransactionStatusProcessor(),
                 TimeProvider.System, NullLogger<PaymentEventService>.Instance);
             Service = new(new(MerchantId, "acme", "callback-password"), EventService,
                 TimeProvider.System, NullLogger<PaymentAdviceService>.Instance);

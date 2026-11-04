@@ -10,7 +10,10 @@ public sealed record Payment(
     Guid PaymentId, string AppPaymentId, string CustomerId, Guid CustomerCardId,
     string SubMerchantId, string OrderNumber, string CurrencyCode, long RequestedAmount,
     string State, DateTimeOffset CreatedAt, long? ApprovedAmount = null,
-    long? RemainingAmount = null, bool HasPendingEvents = false);
+    long? RemainingAmount = null, bool HasPendingEvents = false)
+{
+    public bool HasApproval => State is "Approved" or "PartiallyRefunded" or "Refunded" or "Reversed";
+}
 
 public sealed record PaymentDetails(string AcmeCardToken, string Email, string TradingName,
     string City, string RegionCode, string CountryCode, string MerchantCategoryCode);
@@ -28,7 +31,7 @@ public sealed record PaymentResult(Guid PaymentId, string AppPaymentId, string S
 {
     public static PaymentResult FromPayment(Payment payment) => new(payment.PaymentId, payment.AppPaymentId,
         payment.State, payment.CurrencyCode, payment.RequestedAmount, payment.ApprovedAmount, payment.RemainingAmount,
-        payment.State is "Approved" or "Declined" or "Failed" && !payment.HasPendingEvents);
+        (payment.HasApproval || payment.State is "Declined" or "Failed") && !payment.HasPendingEvents);
 }
 
 public sealed class PaymentRequestException(int statusCode, string code, string message)

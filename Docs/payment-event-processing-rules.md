@@ -5,6 +5,9 @@
 ## Payment State
 
 - **Approved** — the acquirer approved the payment.
+- **PartiallyRefunded** — some of the approved value has been refunded.
+- **Refunded** — the full approved value has been refunded.
+- **Reversed** — the full approved value has been reversed. A full reversal takes precedence over refunds.
 - **Declined** — the acquirer explicitly declined the payment. Acme's `TransactionStatus=Success` does not override a decline response code such as `05` or `51`.
 - **Failed** — Acme explicitly rejected the request: HTTP `400`, `401`, `409` or a final `429`. The E29 retry exception is described below.
 - **Unresolved** — the outcome is not yet known, including before an Acme outcome is received, timeouts, connection failures and HTTP `500`–`504`.
@@ -51,8 +54,11 @@
 - `ApprovedAmount` must come from `PaymentResponse.AuthAmount` in either the response to the payment request or the Real Time Transaction Query response. Do not assume that `Advice.Amount` is an approved amount.
 
 - A reversal can only be applied against an approved payment. Once the full approved value has been reversed, later refunds cannot reduce the payment further and are ignored.
+- Partial reversals are rejected: record them as **Ignored** with a reason. A full reversal must equal the authoritative approved amount and supersedes refunds, including refunds already applied.
 
 - Multiple refunds may be applied as long as their combined value does not exceed the remaining refundable value.
+- Process refunds until the next refund would exceed the remaining value, then ignore that refund and all subsequent refunds. Use the switch transaction timestamp, then the ordinal switch event identifier, to define a stable order independent of delivery order. This ordering is an implementation default recorded in [step 6 decisions](Step6-Transaction-Status-Decisions.md).
+- Derive the current adjustment state and remaining value from the complete event history. A late event can change which earlier Applied events belong to the accepted refund sequence. Ignored events are never reapplied.
 
 - The payment record represents the current interpreted state of the payment. Payment events remain the audit history showing how that state was reached.
 

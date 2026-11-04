@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 payment submission, status and Payment Advice service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Reversal/refund callbacks, further reconciliation and reporting remain unfinished.
+.NET 8 payment submission, status and callback service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Further reconciliation and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -68,19 +68,21 @@ Send JSON to `POST http://127.0.0.1:5080/payments`:
 }
 ```
 
-Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Approved, Declined and Failed outcomes return 200 when fully reconciled; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window.
+Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Fully reconciled outcomes return 200; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window.
 
 Timeouts, connection failures and 500–504 leave the outcome unknown. If submission remains unresolved and time remains, the service makes one Real Time Transaction Query (RTTQ) using the same transaction ID, allowing up to 10 seconds within that 60-second window. RTTQ can establish an Approved or Declined outcome during the same request; inconclusive results remain Unresolved for later reconciliation. Identical repeats return the saved payment without another Acme call; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Further reconciliation is deferred.
 
-Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` is true only for Approved, Declined or Failed payments with no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
+Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` requires a known outcome, including PartiallyRefunded, Refunded or Reversed, and no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
 
 Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending until a submission or RTTQ response supplies it; otherwise later reconciliation is required.
+
+Reversals and refunds arrive at `POST /notifications/transaction-status`, matching `ACME_STATUS_WEBHOOK_URL`. Configure the same `ACME_WEBHOOK_SECRET` in the receiver and stub. The receiver verifies `x-signature` against the exact body bytes and acknowledges only after commit. Adjustments update `RemainingAmount` and expose PartiallyRefunded, Refunded or Reversed states. A full reversal supersedes refunds; partial reversals are Ignored. Refunds follow switch timestamp and event identifier order; the first over-limit refund and all later refunds are Ignored. Unknown references and conflicting outcomes remain Pending. See [step 6 decisions](Docs/Step6-Transaction-Status-Decisions.md) for confirmed rules and defaults chosen for review.
 
 ## Acme operation
 
 Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions, scenario configuration and callbacks.
 
-Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. PaymentIntegration receives Payment Advice; the Transaction Status receiver remains deferred.
+Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. PaymentIntegration receives both Payment Advice and Transaction Status callbacks.
 
 Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
 
@@ -105,7 +107,7 @@ With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same b
 
 `isHeld` means manual release is still required; callback acknowledgements appear in the stub logs.
 
-For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again. The demo runner and service reversal/refund handling remain unfinished.
+For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again. The demo runner remains step 7 work.
 
 ## Tests and verification
 
@@ -119,4 +121,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. The new procedures, their privileges and database locking have not been verified against PostgreSQL. Full end-to-end testing belongs to step 6. See [SOLUTION.md](SOLUTION.md) for design and verification limits.
+The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. Procedure deployment, privileges and database locking remain unverified against PostgreSQL. Full end-to-end verification needs an existing supported integration environment using this application, deployment SQL and stub; none is accessible in the current worktree. See [SOLUTION.md](SOLUTION.md) for verification limits.

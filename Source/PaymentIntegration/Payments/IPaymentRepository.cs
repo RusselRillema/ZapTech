@@ -8,6 +8,8 @@ public interface IPaymentRepository
     Task<PaymentCreation> CreateAsync(Payment payment, CancellationToken cancellationToken);
     Task<IPaymentProcessingSession> BeginProcessingAsync(Guid? paymentId, Guid eventId,
         CancellationToken cancellationToken);
+    Task<IPaymentProcessingSession> BeginProcessingByRrnAsync(string rrn, Guid eventId,
+        CancellationToken cancellationToken);
 }
 
 // Operations within this processing session use one connection and transaction.
@@ -18,6 +20,7 @@ public interface IPaymentProcessingSession : IAsyncDisposable
     Payment? Payment { get; }
     Task InsertEventAsync(PaymentEvent paymentEvent, CancellationToken cancellationToken);
     Task<IReadOnlyList<PaymentEvent>> GetPendingEventsAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<PaymentEvent>> GetTransactionStatusEventsAsync(CancellationToken cancellationToken);
     Task SavePaymentAsync(Payment payment, CancellationToken cancellationToken);
     Task SaveEventAsync(PaymentEvent paymentEvent, CancellationToken cancellationToken);
     Task CommitAsync(CancellationToken cancellationToken);
