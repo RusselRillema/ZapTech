@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentIntegration", "Sourc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentIntegration.Tests", "Source\PaymentIntegration.Tests\PaymentIntegration.Tests.csproj", "{419994F1-8B69-44B8-A01F-1DB975C1971E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentIntegration.Demo", "Source\PaymentIntegration.Demo\PaymentIntegration.Demo.csproj", "{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -71,6 +73,18 @@ Global
 		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x64.Build.0 = Release|Any CPU
 		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x86.ActiveCfg = Release|Any CPU
 		{419994F1-8B69-44B8-A01F-1DB975C1971E}.Release|x86.Build.0 = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|x64.Build.0 = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Debug|x86.Build.0 = Debug|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|x64.ActiveCfg = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|x64.Build.0 = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|x86.ActiveCfg = Release|Any CPU
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -80,5 +94,6 @@ Global
 		{FF200ADF-7B38-42FA-9105-7A98D6B15B11} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
 		{1C3B1CC9-7831-4975-AAE4-CBEE66185583} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
 		{419994F1-8B69-44B8-A01F-1DB975C1971E} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
+		{529D9F92-6C1D-4AE7-801A-A839DEBC67BD} = {B8EFCA5F-814F-285C-A8CB-F00F14650265}
 	EndGlobalSection
 EndGlobal

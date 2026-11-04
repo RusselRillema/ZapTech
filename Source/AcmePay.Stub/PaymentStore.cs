@@ -12,13 +12,16 @@ public sealed class PaymentStore(
         public bool IsHeld { get; set; } = isHeld;
     }
 
-    private sealed class Payment(PaymentResponse response, DateTimeOffset acceptedAt, string currency, bool holdCallbacks)
+    private sealed class Payment(PaymentResponse response, DateTimeOffset acceptedAt, string currency, DemoScenario scenario)
     {
         public PaymentResponse Original { get; } = response;
         public PaymentResponse Current { get; set; } = response;
         public DateTimeOffset AcceptedAt { get; } = acceptedAt;
         public string Currency { get; } = currency;
-        public bool HoldCallbacks { get; } = holdCallbacks;
+        public DemoScenario Scenario { get; } = scenario;
+        public bool HoldCallbacks => Scenario.HoldCallbacks;
+        public int SubmissionCount { get; set; } = 1;
+        public bool ResponseInterrupted { get; set; }
         public List<StoredCallback> Callbacks { get; } = [];
     }
 
@@ -35,11 +38,15 @@ public sealed class PaymentStore(
         var now = clock.GetUtcNow();
         IResult result;
         TimeSpan responseDelay;
+        Payment accepted;
         lock (_gate)
         {
             if (_transactions.TryGetValue(transactionId, out var previous)
                 && now - previous.AcceptedAt < TimeSpan.FromHours(24))
+            {
+                previous.SubmissionCount++;
                 return Wire.Result(previous.Original, clock, channel);
+            }
 
             var rrn = orderNumber[..Math.Min(12, orderNumber.Length)];
             if (_rrns.TryGetValue(rrn, out var owner))
@@ -71,18 +78,28 @@ public sealed class PaymentStore(
                 return Wire.Error(503, "E50", "The gateway is degraded.", clock, transactionId, orderNumber, channel);
 
             // Retain no card token or email in the transaction store or callback payload.
-            var payment = new Payment(response, now, currency, scenario.HoldCallbacks);
+            var payment = new Payment(response, now, currency, scenario);
             payment.Callbacks.Add(new(delivery, scenario.HoldCallbacks));
             _transactions[transactionId] = payment;
             _rrns.Add(rrn, payment);
             result = Wire.Result(response, clock, channel);
             responseDelay = TimeSpan.FromSeconds(scenario.ResponseDelaySeconds);
+            accepted = payment;
         }
 
         // Simulate an accepted payment whose reply is slow/lost. Keep its outcome and
         // callbacks even if the caller times out; RTTQ and controls remain available.
-        if (responseDelay > TimeSpan.Zero)
-            await Task.Delay(responseDelay, clock, cancellationToken);
+        try
+        {
+            if (responseDelay > TimeSpan.Zero)
+                await Task.Delay(responseDelay, clock, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_gate)
+                accepted.ResponseInterrupted = true;
+            throw;
+        }
         return result;
     }
 
@@ -138,12 +155,34 @@ public sealed class PaymentStore(
             if (!_transactions.TryGetValue(transactionId, out var payment))
                 return Results.NotFound();
 
-            return Results.Ok(payment.Callbacks.Select(callback => new
+            return Results.Ok(payment.Callbacks.Select(callback =>
             {
-                identifier = callback.Delivery.Identifier,
-                kind = callback.Delivery.IsAdvice ? "PaymentAdvice" : "TransactionStatus",
-                isHeld = callback.IsHeld
+                var statistics = callbacks.GetStatistics(callback.Delivery);
+                return new
+                {
+                    identifier = callback.Delivery.Identifier,
+                    kind = callback.Delivery.IsAdvice ? "PaymentAdvice" : "TransactionStatus",
+                    isHeld = callback.IsHeld,
+                    statistics.CompletedAttempts,
+                    statistics.Acknowledgements,
+                    statistics.LastHttpStatusCode
+                };
             }).ToArray());
+        }
+    }
+
+    public IResult GetObservation(string transactionId)
+    {
+        lock (_gate)
+        {
+            if (!_transactions.TryGetValue(transactionId, out var payment))
+                return Results.NotFound();
+            return Results.Ok(new
+            {
+                payment.SubmissionCount,
+                payment.ResponseInterrupted,
+                payment.Scenario.ResponseDelaySeconds
+            });
         }
     }
 
