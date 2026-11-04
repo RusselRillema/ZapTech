@@ -1,31 +1,51 @@
 # Zapper Assessment
 
-Scaffold only for the .NET 8 payments integration assessment in [the assignment brief](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf).
-
-## Repository layout
-
-- `Source/AcmePay.Stub/`: TODO: Acme Pay API stub from Appendix A.
-- `Source/PaymentIntegration/`: TODO: payment service, SQL persistence and daily reporting.
-- `Source/PaymentIntegration.Tests/`: TODO: meaningful application tests.
-- `ai/`: TODO: useful plans, prompts, task breakdowns, review notes and sanitised Acme client sessions.
-- `SOLUTION.md`: design, trade-offs, AWS approach and AI workflow.
-
-## Prerequisites and configuration
-
-TODO: document .NET 8, the selected SQL database (PostgreSQL, SQL Server or SQLite), and container tooling.
-
-TODO: list environment variables for database access, Acme URL, merchant ID, API key, advice credentials and webhook secret; explain local secret setup without committing credentials.
+.NET 8 Acme Pay stub for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). The payment integration service, database and reporting are not implemented yet.
 
 ## Run locally
 
-TODO: provide build, database setup/seed, container startup and shutdown commands, service URLs and diagnostics instructions. Seed a few sub-merchants, customers, stored card tokens and payments.
+Requires the .NET 8 SDK. Copy `.env.example` to `.env` and set credentials and callback URLs before running:
 
-## Exercise the integration
+```bash
+set -a
+. ./.env
+set +a
+dotnet run --project Source/AcmePay.Stub --urls http://localhost:5081
+```
 
-TODO: show payment submission using customer ID, sub-merchant ID, amount and app payment ID; payment status queries; both Acme callbacks; and daily summaries by date, sub-merchant and currency.
+Health check: `GET http://localhost:5081/health`.
 
-TODO: document demonstrations of approval, decline, duplicate submissions, duplicate/out-of-order notifications, reversal, refund and timeout recovery.
+## Docker
 
-## Validation and walkthrough
+If callback receivers run on your host, use `host.docker.internal` in their URLs in `.env`.
 
-TODO: provide test commands and verification limits. Link a 5–10 minute video covering architecture, key decisions, trade-offs and implementation highlights.
+```bash
+docker build -f Source/AcmePay.Stub/Dockerfile -t acmepay-stub .
+docker run --rm --name acmepay-stub --env-file .env \
+  --add-host host.docker.internal:host-gateway \
+  -p 127.0.0.1:5081:8080 acmepay-stub
+```
+
+## API
+
+Payment and query payloads follow Appendix A. Both require `Authorization: Bearer <ACME_API_KEY>`.
+
+- `POST /api/payment`
+- `GET /apirttq/query/Merchant/{MerchantID}?TransactionID={id}` (or `OrderNumber={reference}`)
+
+With `ACME_ENABLE_CONTROLS=true`, these bearer-protected routes send full-amount status callbacks using a body such as `{"Amount":1999}`:
+
+- `POST /__stub/transactions/{id}/reversal`
+- `POST /__stub/transactions/{id}/refund`
+
+Payment Advice uses the configured Basic credentials. Status webhooks carry a Base64 HMAC-SHA256 signature of the exact body bytes in `x-signature`.
+
+Valid payments are approved. Partial events are unsupported. Transactions and pending callbacks are lost on restart.
+
+## Tests
+
+```bash
+dotnet test ZenTech.sln --configuration Release
+```
+
+See [SOLUTION.md](SOLUTION.md) for design and verification limits, and [Docs/TODO.md](Docs/TODO.md) for deferred scenarios.
