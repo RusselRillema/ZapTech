@@ -2,6 +2,26 @@
 
 - A payment is stored before the request is sent to Acme.
 
+## Payment State
+
+- **Approved** — the acquirer approved the payment.
+- **Declined** — the acquirer explicitly declined the payment. Acme's `TransactionStatus=Success` does not override a decline response code such as `05` or `51`.
+- **Failed** — Acme explicitly rejected the request: HTTP `400`, `401`, `409` or a final `429`. The E29 retry exception is described below.
+- **Unresolved** — the outcome is not yet known, including before an Acme outcome is received, timeouts, connection failures and HTTP `500`–`504`.
+
+- A repeated `AppPaymentId` with identical payment details returns the existing local payment without creating or submitting another payment. Reusing that identifier with different details returns HTTP `409`.
+
+## E29 Rate-Limit Retries
+
+- HTTP `429` with `ResponseDetail.Code=E29` and valid `Retry-After` seconds retries the same payment using its existing `TransactionID` and `OrderNumber`. Each retry has a new message header. This internal retry remains part of the original submission; repeating the app request still returns the existing local payment.
+- Wait for `max(3 seconds, 2 × Retry-After)` before retrying. A value of `1` means a `3`-second wait; a value of `2` means a `4`-second wait.
+- Record every E29 response before waiting. Its event remains **Pending** while awaiting a retry outcome. Reconsider it when a later response establishes the outcome.
+- Keep retries within the existing `60`-second submission window. Do not shorten the required wait to fit that window. If another attempt cannot start within the window, finalize the last E29 rejection as **Failed**.
+- A missing, invalid or unrepresentable `Retry-After` value does not cause a guessed delay or an automatic retry; the rejection is **Failed**.
+- Timeouts, connection failures and HTTP `500`–`504` remain **Unresolved** and are not automatically retried.
+
+## Payment Events and Amounts
+
 - All monetary values in the database are stored in the currency's lowest monetary unit, e.g., cents for ZAR: R19.99 is stored as 1999.
 
 - Every meaningful response or notification received from Acme is stored as a payment event, even if it cannot currently be applied.
@@ -11,7 +31,7 @@
 - Events may arrive more than once or out of order. Arrival order must not determine the payment's final state.
 
 - An event has one of three processing states:
-  - **Pending** — received, but cannot yet be applied because required earlier lifecycle information is not known.
+  - **Pending** — received, but cannot yet be applied because required lifecycle information or an E29 retry outcome is not known.
   - **Applied** — successfully used to update the current payment state or value.
   - **Ignored** — recorded for audit purposes but will never be applied because it conflicts with the established payment lifecycle.
 
