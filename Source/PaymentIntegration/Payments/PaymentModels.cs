@@ -17,7 +17,7 @@ public sealed record PaymentDetails(string AcmeCardToken, string Email, string T
 
 public sealed record PaymentCreation(bool Created, Payment Payment);
 
-public sealed record PaymentEvent(Guid PaymentEventId, Guid PaymentId, string Source,
+public sealed record PaymentEvent(Guid PaymentEventId, Guid? PaymentId, string Source,
     JsonElement? Payload, short? HttpStatusCode, DateTimeOffset ReceivedAt,
     string ProcessingState = "Pending", string? ProcessingComment = null,
     DateTimeOffset? ProcessedAt = null);

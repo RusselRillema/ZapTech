@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics;
 using Npgsql;
@@ -12,8 +13,9 @@ public static class PaymentIntegrationApplication
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddSingleton(TimeProvider.System);
-        // Resolve external configuration only when needed; health remains independent.
+        // Resolve each operation's external configuration lazily; health remains independent.
         builder.Services.AddSingleton(provider => AcmeSettings.Read(provider.GetRequiredService<IConfiguration>()));
+        builder.Services.AddSingleton(provider => AcmeAdviceSettings.Read(provider.GetRequiredService<IConfiguration>()));
         builder.Services.AddSingleton(provider =>
         {
             var configuration = provider.GetRequiredService<IConfiguration>();
@@ -42,6 +44,8 @@ public static class PaymentIntegrationApplication
         builder.Services.AddSingleton<CardAcceptorNameFormatterFactory>();
         builder.Services.AddSingleton<AcmeRequestFactory>();
         builder.Services.AddScoped<PaymentResponseProcessor>();
+        builder.Services.AddScoped<PaymentEventService>();
+        builder.Services.AddScoped<PaymentAdviceService>();
         builder.Services.AddScoped<PaymentService>();
         builder.Services.AddScoped<PaymentStatusService>();
         configure?.Invoke(builder);
@@ -67,6 +71,7 @@ public static class PaymentIntegrationApplication
                 return Results.Problem(statusCode: exception.StatusCode, title: exception.Code, detail: exception.Message);
             }
         });
+        app.MapPost("/notifications/payment-advice", ReceiveAdviceAsync);
         app.MapPost("/payments", async (NewPaymentRequest request, PaymentService service, CancellationToken cancellationToken) =>
         {
             try
@@ -80,5 +85,50 @@ public static class PaymentIntegrationApplication
             }
         });
         return app;
+    }
+
+    private static async Task<IResult> ReceiveAdviceAsync(HttpContext context, AcmeAdviceSettings settings)
+    {
+        // Authenticate before parsing the body or resolving database dependencies.
+        if (!settings.Authenticates(context.Request.Headers.Authorization.ToString()))
+        {
+            context.Response.Headers.WWWAuthenticate = "Basic realm=\"Acme Payment Advice\", charset=\"UTF-8\"";
+            return Results.Unauthorized();
+        }
+
+        string? transactionId = null;
+        try
+        {
+            if (!context.Request.HasJsonContentType())
+                return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            using var body = await JsonDocument.ParseAsync(context.Request.Body,
+                cancellationToken: context.RequestAborted);
+            if (body.RootElement.ValueKind == JsonValueKind.Object
+                && body.RootElement.TryGetProperty("TransactionID", out var id) && id.ValueKind == JsonValueKind.String)
+                transactionId = id.GetString();
+            var service = context.RequestServices.GetRequiredService<PaymentAdviceService>();
+            await service.ReceiveAsync(body.RootElement);
+            return Results.Ok();
+        }
+        catch (PaymentRequestException exception)
+        {
+            return Results.Problem(statusCode: exception.StatusCode, title: exception.Code, detail: exception.Message);
+        }
+        catch (JsonException)
+        {
+            return Results.Problem(statusCode: 400, title: "Invalid Payment Advice JSON");
+        }
+        catch (BadHttpRequestException exception)
+        {
+            return Results.Problem(statusCode: exception.StatusCode, title: "Invalid Payment Advice request");
+        }
+        catch (Exception exception)
+        {
+            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("PaymentAdviceEndpoint")
+                .LogError(exception, "Operation {Operation} failed for Acme transaction {AcmeTransactionId}",
+                    "receive Payment Advice", transactionId);
+            return Results.Problem(statusCode: 503, title: "Payment Advice could not be recorded",
+                detail: "The notification was not acknowledged. Retry the delivery.");
+        }
     }
 }

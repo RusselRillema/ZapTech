@@ -10,6 +10,7 @@ Implement Task 1 in the following steps. Plan each step separately before implem
 
 4. Create the get payment status endpoint.
 5. Implement the payment lifecycle notification callback according to the Acme specification.
+   - RTTQ recovery and reconciliation implementation belong to step 3.1. Coordinate with its shared event processing; notifications lacking required information remain pending under the payment event processing rules.
 6. Implement the reversal and refund callback. This will likely need to be broken into smaller steps during its planning.
 7. Plan and implement demonstrations for the scenarios required by Task 1. This will likely need to be broken into smaller steps during its planning.
 

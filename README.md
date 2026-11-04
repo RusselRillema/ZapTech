@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 payment submission and status service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Callbacks, reconciliation and reporting remain unfinished.
+.NET 8 payment submission, status and Payment Advice service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Reversal/refund callbacks, RTTQ reconciliation and reporting remain unfinished.
 
 ## Choose a startup mode
 
@@ -72,11 +72,13 @@ Amount is a positive integer in the currency's lowest unit; currency and the cus
 
 Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` is true only for Approved, Declined or Failed payments with no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
 
+Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending for the separate RTTQ/submission work.
+
 ## Acme operation
 
 Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Docker's example listens on port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions and queued callbacks.
 
-Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. No receiver is supplied.
+Native callbacks use `localhost`; container callbacks use `host.docker.internal` with Compose's host-gateway mapping. Receivers must be reachable from the container; Linux containers cannot reach a host listener bound only to loopback. PaymentIntegration receives Payment Advice; the Transaction Status receiver remains deferred.
 
 Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
 

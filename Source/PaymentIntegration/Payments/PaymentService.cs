@@ -4,7 +4,7 @@ using PaymentIntegration.Acme;
 namespace PaymentIntegration.Payments;
 
 public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentClient acme,
-    AcmeRequestFactory requestFactory, PaymentResponseProcessor responseProcessor,
+    AcmeRequestFactory requestFactory, PaymentEventService events,
     TimeProvider clock, ILogger<PaymentService> logger)
 {
     public async Task<PaymentResult> SubmitAsync(NewPaymentRequest request, CancellationToken cancellationToken)
@@ -156,68 +156,8 @@ public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentCl
         PaymentEvent? receipt,
         bool retryingRateLimit)
     {
-        // Audit received responses even when the HTTP/retry deadline has expired.
-        using var persistenceTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
-        var token = persistenceTimeout.Token;
-
-        await using var session = await repository.BeginProcessingAsync(paymentId, eventId, token);
-        var payment = session.Payment;
-
-        if (receipt is not null)
-        {
-            await session.InsertEventAsync(receipt, token);
-        }
-
-        var pending = (await session.GetPendingEventsAsync(token)).ToArray();
-        bool applied;
-
-        do
-        {
-            applied = false;
-
-            for (var index = 0; index < pending.Length; index++)
-            {
-                if (pending[index].ProcessingState != "Pending")
-                {
-                    continue;
-                }
-
-                // Earlier E29 receipts await the current attempt's outcome.
-                var deferRateLimitFailure = pending[index].PaymentEventId != eventId || retryingRateLimit;
-                var result = responseProcessor.Process(
-                    payment,
-                    pending[index],
-                    clock.GetUtcNow(),
-                    deferRateLimitFailure);
-
-                payment = result.Payment;
-                pending[index] = result.Event;
-                applied |= pending[index].ProcessingState == "Applied";
-            }
-        } while (applied);
-
-        payment = payment with
-        {
-            HasPendingEvents = pending.Any(item => item.ProcessingState == "Pending")
-        };
-
-        await session.SavePaymentAsync(payment, token);
-
-        foreach (var item in pending)
-        {
-            await session.SaveEventAsync(item, token);
-        }
-
-        await session.CommitAsync(token);
-
-        logger.LogInformation(
-            "Payment {PaymentId}, event {PaymentEventId} processed; state {PaymentState}, pending {HasPendingEvents}",
-            payment.PaymentId,
-            eventId,
-            payment.State,
-            payment.HasPendingEvents);
-
-        return payment;
+        return await events.ProcessAsync(paymentId, eventId, receipt, retryingRateLimit)
+            ?? throw new InvalidOperationException("The submitted payment no longer exists.");
     }
 
     private PaymentResult Existing(Payment payment, NewPaymentRequest request)

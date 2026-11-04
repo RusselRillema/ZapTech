@@ -6,14 +6,14 @@ public interface IPaymentRepository
     Task<PaymentDetails?> GetDetailsAsync(string customerId, Guid customerCardId,
         string subMerchantId, CancellationToken cancellationToken);
     Task<PaymentCreation> CreateAsync(Payment payment, CancellationToken cancellationToken);
-    Task<IPaymentProcessingSession> BeginProcessingAsync(Guid paymentId, Guid eventId,
+    Task<IPaymentProcessingSession> BeginProcessingAsync(Guid? paymentId, Guid eventId,
         CancellationToken cancellationToken);
 }
 
-// Every operation on a session shares its locked payment, connection and transaction.
+// All operations share one connection and transaction; linked events retain the payment row lock.
 public interface IPaymentProcessingSession : IAsyncDisposable
 {
-    Payment Payment { get; }
+    Payment? Payment { get; }
     Task InsertEventAsync(PaymentEvent paymentEvent, CancellationToken cancellationToken);
     Task<IReadOnlyList<PaymentEvent>> GetPendingEventsAsync(CancellationToken cancellationToken);
     Task SavePaymentAsync(Payment payment, CancellationToken cancellationToken);

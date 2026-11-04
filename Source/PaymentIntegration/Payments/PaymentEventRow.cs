@@ -14,7 +14,7 @@ internal sealed class PaymentEventRow
     public Guid PaymentEventId { get; set; }
 
     [PgName("payment_id")]
-    public Guid PaymentId { get; set; }
+    public Guid? PaymentId { get; set; }
 
     [PgName("source")]
     public string Source { get; set; } = string.Empty;
