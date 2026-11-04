@@ -4,5 +4,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Use the same repository-root .env as Docker Compose. -->
+    <RunWorkingDirectory>$(MSBuildProjectDirectory)/../..</RunWorkingDirectory>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="DotNetEnv" Version="3.2.0" />
+  </ItemGroup>
 </Project>

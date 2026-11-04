@@ -1,0 +1,20 @@
+services:
+  acme:
+    build:
+      context: .
+      dockerfile: Source/AcmePay.Stub/Dockerfile
+    environment:
+      ASPNETCORE_URLS: ${ASPNETCORE_URLS:-http://+:8080}
+      ACME_API_KEY: ${ACME_API_KEY:?Set ACME_API_KEY in .env}
+      ACME_MERCHANT_ID: ${ACME_MERCHANT_ID:?Set ACME_MERCHANT_ID in .env}
+      ACME_ADVICE_URL: ${ACME_ADVICE_URL:?Set ACME_ADVICE_URL in .env}
+      ACME_ADVICE_USERNAME: ${ACME_ADVICE_USERNAME:?Set ACME_ADVICE_USERNAME in .env}
+      ACME_ADVICE_PASSWORD: ${ACME_ADVICE_PASSWORD:?Set ACME_ADVICE_PASSWORD in .env}
+      ACME_STATUS_WEBHOOK_URL: ${ACME_STATUS_WEBHOOK_URL:?Set ACME_STATUS_WEBHOOK_URL in .env}
+      ACME_WEBHOOK_SECRET: ${ACME_WEBHOOK_SECRET:?Set ACME_WEBHOOK_SECRET in .env}
+      ACME_ENABLE_CONTROLS: ${ACME_ENABLE_CONTROLS:-false}
+    ports:
+      - "127.0.0.1:${ACME_HTTP_PORT:-5081}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 30s
