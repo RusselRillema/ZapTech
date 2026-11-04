@@ -37,3 +37,4 @@ internal sealed record Scenario(string PaymentOutcome = "Approved", int Response
 internal sealed record ObservedCallback(string Identifier, string Kind, bool IsHeld,
     int CompletedAttempts, int Acknowledgements, int? LastHttpStatusCode);
 internal sealed record ObservedTransaction(int SubmissionCount, bool ResponseInterrupted, int ResponseDelaySeconds);
+internal sealed record TriggeredAdjustment(string TransactionUUID, string Rrn);

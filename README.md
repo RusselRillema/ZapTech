@@ -101,7 +101,7 @@ With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same b
 
 | Control | Behaviour |
 | --- | --- |
-| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate a full-amount event using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. |
+| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate one full-amount event per type using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. Both types may be generated for one payment; RTTQ retains reversal precedence. |
 | `GET /__stub/transactions/{id}/callbacks` | List generated callback `identifier`, `kind` and `isHeld`; reading does not send anything. |
 | `GET /__stub/transactions/{id}` | Observe accepted/replayed submission count, configured reply delay and whether a delayed reply was interrupted. |
 | `POST /__stub/transactions/{id}/callbacks/{identifier}/send` | Queue a held callback or replay one using its original bytes and identity; returns 202, or 503 if the queue is full. |
@@ -120,7 +120,7 @@ docker compose run --rm --no-deps -T demo --list
 docker compose run --rm --no-deps -T demo approval
 ```
 
-The six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Reversal/refund demonstrations are excluded until Task 1 Step 6 is ready.
+The default six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Adjustment scenarios are opt-in and require Task 1 Step 6.
 
 Use a dedicated demo stack and run scenarios sequentially. Each run creates a new app payment identifier using the existing seeded customer/card/sub-merchant from the submission example, retains those payments for audit, and restores the previous stub scenario settings. To use other existing catalogue records, set `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID` and `DEMO_SUB_MERCHANT_ID`; `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` default to 1999 and ZAR. No data or schemas are created by the runner.
 
@@ -135,6 +135,17 @@ bash Scripts/run-demos.sh
 ```
 
 The script requires Bash and Docker Compose, reads the configured root `.env`, obtains its scenario list from the console, and stops with a nonzero exit status on the first failure. Use `bash Scripts/run-demos.sh approval timeout` for selected scenarios, `--list` to list them or `--help` for setup options. `DEMO_ENV_FILE` selects another environment file; `COMPOSE_PROJECT_NAME` selects another dedicated stack. Existing containers and database audit data are retained; the script never resets a database or removes volumes. The two delayed scenarios take about 50 seconds together, in addition to build/startup time.
+
+The follow-up adjustment suite adds `reversal`, `refund`, `reversal-before-approval`, `refund-before-approval`, `refund-then-reversal` and `reversal-then-refund`. These check full outcomes, exact callback replays, late approval Advice preserving adjusted value, early adjustments and Advice remaining unresolved until AuthAmount arrives, and full reversal precedence in both delivery orders. All notifications are generated and signed by the stub. Run only after the actual step 6 receiver and its SQL are included in the application being deployed:
+
+```text
+bash Scripts/run-demos.sh --include-adjustments
+docker compose run --rm --no-deps -T demo --list-adjustments
+```
+
+The callback dependency is published in [PR #29](https://github.com/RusselRillema/ZapTech/pull/29), commit `b36a6b5f78334eb28d0e03e33c604ead28960d4a`, and remains unmerged. The `adjustment-compose` CI job combines that published commit with these demonstrations in a temporary working tree, without committing or pushing the combination, then runs the real deployment SQL and all twelve scenarios. Only documentation conflicts are resolved automatically; source/SQL conflicts fail the job. The ordinary Compose job retains the original six scenarios; manual input `include_adjustments` also enables the new suite when the tested ref already includes step 6.
+
+Capability limits: partial refunds/reversals return 501 in the stub controls; multiple distinct refunds, cutoff ordering and partial-reversal rejection by the application therefore remain untested here. Callback acknowledgements and current state are observed, but internal audit classifications have no read API. There is also no supported API to inject an additional bank response after an adjustment is already applied; early-response reconsideration and late Advice are covered instead. No uncommitted step 6 application code is copied into this branch.
 
 ## Tests and verification
 
