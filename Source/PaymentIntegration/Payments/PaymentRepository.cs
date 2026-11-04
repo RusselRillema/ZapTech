@@ -106,7 +106,8 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
                 connection,
                 transaction,
                 created.PaymentId,
-                cancellationToken);
+                cancellationToken)
+                ?? throw new InvalidOperationException("The created payment could not be locked.");
 
             operation = "commit";
             await transaction.CommitAsync(cancellationToken);
@@ -130,7 +131,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
     }
 
     public async Task<IPaymentProcessingSession> BeginProcessingAsync(
-        Guid paymentId,
+        Guid? paymentId,
         Guid eventId,
         CancellationToken cancellationToken)
     {
@@ -148,7 +149,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
                 paymentId,
                 cancellationToken);
 
-            return new Session(connection, transaction, payment, eventId, this, logger);
+            return new Session(connection, transaction, payment, paymentId, eventId, this, logger);
         }
         catch (Exception exception)
         {
@@ -178,10 +179,10 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
         }
     }
 
-    private async Task<Payment> GetLockedPaymentAsync(
+    private async Task<Payment?> GetLockedPaymentAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        Guid paymentId,
+        Guid? paymentId,
         CancellationToken cancellationToken)
     {
         var payment = await CallAsync(
@@ -193,8 +194,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
             ReadPayment,
             cancellationToken);
 
-        return payment ?? throw new InvalidOperationException(
-            "The locked payment procedure returned no payment.");
+        return payment;
     }
 
     private async Task<T?> ReadAsync<T>(
@@ -355,14 +355,15 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
     private sealed class Session(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
-        Payment payment,
+        Payment? payment,
+        Guid? requestedPaymentId,
         Guid eventId,
         PaymentRepository repository,
         ILogger<PaymentRepository> logger) : IPaymentProcessingSession
     {
         private bool committed;
 
-        public Payment Payment { get; } = payment;
+        public Payment? Payment { get; } = payment;
 
         public Task InsertEventAsync(
             PaymentEvent paymentEvent,
@@ -372,7 +373,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
                 "payment_events_create",
                 [
                     new("p_payment_event_id", NpgsqlDbType.Uuid, paymentEvent.PaymentEventId),
-                    new("p_payment_id", NpgsqlDbType.Uuid, Payment.PaymentId),
+                    new("p_payment_id", NpgsqlDbType.Uuid, Payment?.PaymentId),
                     new("p_source", NpgsqlDbType.Text, paymentEvent.Source),
                     new("p_payload", NpgsqlDbType.Jsonb, paymentEvent.Payload?.GetRawText()),
                     new("p_http_status_code", NpgsqlDbType.Smallint, paymentEvent.HttpStatusCode),
@@ -390,7 +391,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
                     connection,
                     transaction,
                     "payment_events_get_pending",
-                    [new("p_payment_id", NpgsqlDbType.Uuid, Payment.PaymentId)],
+                    [new("p_payment_id", NpgsqlDbType.Uuid, Payment?.PaymentId)],
                     ["p_result_events"],
                     repository.ReadPendingEvents,
                     cancellationToken);
@@ -406,10 +407,12 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
             Payment updated,
             CancellationToken cancellationToken)
         {
+            if (Payment is null)
+                throw new InvalidOperationException("An unlinked event cannot update a payment.");
             return ExecuteAsync(
                 "payments_update",
                 [
-                    new("p_payment_id", NpgsqlDbType.Uuid, Payment.PaymentId),
+                    new("p_payment_id", NpgsqlDbType.Uuid, Payment?.PaymentId),
                     new("p_state", NpgsqlDbType.Text, updated.State),
                     new("p_approved_amount", NpgsqlDbType.Bigint, updated.ApprovedAmount),
                     new("p_remaining_amount", NpgsqlDbType.Bigint, updated.RemainingAmount)
@@ -424,7 +427,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
             return ExecuteAsync(
                 "payment_events_update",
                 [
-                    new("p_payment_id", NpgsqlDbType.Uuid, Payment.PaymentId),
+                    new("p_payment_id", NpgsqlDbType.Uuid, Payment?.PaymentId),
                     new("p_payment_event_id", NpgsqlDbType.Uuid, paymentEvent.PaymentEventId),
                     new("p_processing_state", NpgsqlDbType.Text, paymentEvent.ProcessingState),
                     new("p_processing_comment", NpgsqlDbType.Text, paymentEvent.ProcessingComment),
@@ -476,7 +479,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
                 exception,
                 "Database operation {Operation} failed for payment {PaymentId}, event {PaymentEventId}",
                 operation,
-                Payment.PaymentId,
+                requestedPaymentId,
                 eventId);
         }
 
@@ -493,7 +496,7 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
 
                         logger.LogWarning(
                             "Rolled back payment {PaymentId}, event {PaymentEventId}",
-                            Payment.PaymentId,
+                            requestedPaymentId,
                             eventId);
                     }
                     catch (Exception exception)

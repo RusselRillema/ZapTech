@@ -210,8 +210,8 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Payment does not exist.'
-            USING ERRCODE = 'P0002';
+        -- Missing payments return NULL outputs so advice can be audited unlinked.
+        RETURN;
     END IF;
 
     -- Read the state and event flag with a fresh snapshot after acquiring the lock.
@@ -267,14 +267,17 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $procedure$
 BEGIN
-    PERFORM 1
-    FROM public."Payments"
-    WHERE "PaymentId" = p_payment_id
-    FOR UPDATE;
+    -- Unlinked advice has no payment row to lock and cannot update payment state.
+    IF p_payment_id IS NOT NULL THEN
+        PERFORM 1
+        FROM public."Payments"
+        WHERE "PaymentId" = p_payment_id
+        FOR UPDATE;
 
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Payment does not exist.'
-            USING ERRCODE = 'P0002';
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Payment does not exist.'
+                USING ERRCODE = 'P0002';
+        END IF;
     END IF;
 
     INSERT INTO public."PaymentEvents"
@@ -375,14 +378,16 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $procedure$
 BEGIN
-    PERFORM 1
-    FROM public."Payments"
-    WHERE "PaymentId" = p_payment_id
-    FOR UPDATE;
+    IF p_payment_id IS NOT NULL THEN
+        PERFORM 1
+        FROM public."Payments"
+        WHERE "PaymentId" = p_payment_id
+        FOR UPDATE;
 
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Payment does not exist.'
-            USING ERRCODE = 'P0002';
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Payment does not exist.'
+                USING ERRCODE = 'P0002';
+        END IF;
     END IF;
 
     UPDATE public."PaymentEvents"
@@ -390,7 +395,7 @@ BEGIN
         "ProcessingState" = p_processing_state,
         "ProcessingComment" = p_processing_comment,
         "ProcessedAt" = p_processed_at
-    WHERE "PaymentId" = p_payment_id
+    WHERE "PaymentId" IS NOT DISTINCT FROM p_payment_id
         AND "PaymentEventId" = p_payment_event_id;
 
     IF NOT FOUND THEN

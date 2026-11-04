@@ -218,7 +218,7 @@ public sealed class PaymentServiceTests
 
         Assert.Equal("Unresolved", result.State);
         flow.Client.VerifyNoOtherCalls();
-        flow.Repository.Verify(repository => repository.BeginProcessingAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        flow.Repository.Verify(repository => repository.BeginProcessingAsync(It.IsAny<Guid?>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -922,7 +922,7 @@ public sealed class PaymentServiceTests
                     Created = payment;
                     return new(true, payment);
                 });
-            Repository.Setup(repository => repository.BeginProcessingAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            Repository.Setup(repository => repository.BeginProcessingAsync(It.IsAny<Guid?>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(() =>
                 {
                     Calls.Add("lock");
@@ -976,7 +976,9 @@ public sealed class PaymentServiceTests
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
                     clock, new CardAcceptorNameFormatterFactory(new FnbCardAcceptorNameFormatter())),
-                new PaymentResponseProcessor(), clock, NullLogger<PaymentService>.Instance);
+                new PaymentEventService(Repository.Object, new PaymentResponseProcessor(), clock,
+                    NullLogger<PaymentEventService>.Instance),
+                clock, NullLogger<PaymentService>.Instance);
         }
 
         public Payment ExistingPayment(string state) => new(Guid.NewGuid(), Request.AppPaymentId!, Request.CustomerId!,

@@ -8,9 +8,12 @@ public sealed class PaymentResponseProcessor
         DateTimeOffset processedAt,
         bool retryingRateLimit = false)
     {
+        if (receipt.Source == "PaymentAdvice")
+            return ProcessAdvice(payment, receipt, processedAt);
+
         if (receipt.Source is not ("PaymentResponse" or "TransactionQuery"))
         {
-            //TODO: Implement notification processing in its respective step.
+            //TODO: Implement reversal/refund processing in its respective step.
             throw new NotImplementedException($"Event source {receipt.Source} is not implemented yet.");
         }
 
@@ -140,6 +143,67 @@ public sealed class PaymentResponseProcessor
             },
             receipt,
             processedAt);
+    }
+
+    public PaymentEvent ProcessUnlinkedAdvice(PaymentEvent receipt, DateTimeOffset processedAt)
+    {
+        if (receipt.Payload is { ValueKind: JsonValueKind.Object } payload
+            && Text(payload, "RequestType") is { } requestType && requestType != "Payment")
+        {
+            return receipt with
+            {
+                ProcessingState = "Ignored",
+                ProcessingComment = "UnsupportedRequestType",
+                ProcessedAt = processedAt
+            };
+        }
+        return receipt with { ProcessingComment = "UnknownPayment" };
+    }
+
+    private (Payment Payment, PaymentEvent Event) ProcessAdvice(
+        Payment payment, PaymentEvent receipt, DateTimeOffset processedAt)
+    {
+        if (receipt.Payload is not { ValueKind: JsonValueKind.Object } advice)
+            return LeavePending(payment, receipt, "No usable Payment Advice payload.");
+        if (Text(advice, "RequestType") != "Payment")
+            return Ignore(payment, receipt, processedAt, "UnsupportedRequestType");
+        // Acme's conventions specify ZAR when CurrencyCode is omitted.
+        if ((Text(advice, "CurrencyCode") ?? "ZAR") != payment.CurrencyCode)
+            return Ignore(payment, receipt, processedAt, "Payment Advice currency differs from the payment currency.");
+        if (!Guid.TryParse(Text(advice, "TransactionID"), out var id) || id != payment.PaymentId)
+            return Ignore(payment, receipt, processedAt, "Payment Advice belongs to a different transaction.");
+        if (Text(advice, "OrderNumber") is { } order && order != payment.OrderNumber)
+            return Ignore(payment, receipt, processedAt, "Payment Advice belongs to a different order.");
+        if (Text(advice, "RetrievalReferenceNumber") != payment.OrderNumber[..Math.Min(12, payment.OrderNumber.Length)])
+            return Ignore(payment, receipt, processedAt, "Payment Advice belongs to a different retrieval reference.");
+
+        var hasOutcome = payment.State != "Unresolved";
+        if (Text(advice, "ResponseSource") != "Acquirer" || string.IsNullOrWhiteSpace(Text(advice, "ResponseCode")))
+        {
+            return hasOutcome
+                ? Ignore(payment, receipt, processedAt, "Payment Advice establishes no new acquirer outcome.")
+                : LeavePending(payment, receipt, "Payment Advice does not establish an acquirer outcome.");
+        }
+
+        var approved = Text(advice, "ResponseCode") == "00";
+        var nextState = approved ? "Approved" : "Declined";
+        if (approved && payment.ApprovedAmount is null)
+        {
+            return LeavePending(payment, receipt,
+                "Approval advice has no authoritative AuthAmount; awaiting a payment response or transaction query.");
+        }
+        if (hasOutcome)
+        {
+            return payment.State == nextState
+                ? Ignore(payment, receipt, processedAt, "This bank outcome has already been applied.")
+                : LeavePending(payment, receipt, "Conflicting bank outcomes require reconciliation.");
+        }
+        return Apply(payment with
+        {
+            State = nextState,
+            ApprovedAmount = approved ? payment.ApprovedAmount : null,
+            RemainingAmount = approved ? payment.ApprovedAmount : null
+        }, receipt, processedAt);
     }
 
     private (Payment Payment, PaymentEvent Event) LeavePending(
