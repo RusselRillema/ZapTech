@@ -16,4 +16,6 @@
 
 ## Additional Paths and Links
 
+Before implementing, changing, testing, or reviewing payment lifecycle behavior—including Acme responses and notifications, event processing, reversals, refunds, state queries, or reconciliation—read and follow [Payment Event Processing Rules](Docs/payment-event-processing-rules.md). Ask the user to clarify any ambiguity or conflict before implementing business logic.
+
 Before creating a commit, opening a pull request, or reviewing a pull request, read and follow [ai/skills/AcmeCompliance.md](ai/skills/AcmeCompliance.md) and [ai/skills/SqlCompliance.md](ai/skills/SqlCompliance.md).
