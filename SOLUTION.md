@@ -11,11 +11,15 @@
 
 Setup, endpoints and authentication are documented in [README.md](README.md).
 
+## Configuration
+
+Configuration comes from environment variables, as required by the assignment. For native development, DotNetEnv loads an optional repository-root `.env` before the host is created, preserving existing variables. The native run working directory is set to the repository root. Compose reads the same file and passes the settings to its single Acme container; existing shell variables take precedence. The examples account for native and container listening addresses and callback routing. Local `.env` files are excluded from Git and Docker builds. AWS can supply the variables directly without a file.
+
 ## Validation
 
-The Release build passed with zero warnings. All 24 xUnit cases passed on .NET 8.0.24, exercising the running stub and an HTTP callback receiver: validation, bearer authentication, queries, concurrent replay, RRN conflicts, callback credentials/signatures, status changes and retries.
+The Release build passed with zero warnings and all 24 existing xUnit cases passed, covering live HTTP validation, authentication, queries, concurrency and callbacks. Validation ran on Linux with .NET 8 SDK 8.0.427 installed separately under `/tmp`. Native startup checks verified repository-root `.env` loading, literal `$`/`#` values, environment overrides, environment-only startup, health responses, authentication, shutdown and missing-setting rejection. Compose configuration checks verified the single service, loopback publishing, callback addresses, environment precedence and required settings.
 
-Docker was unavailable, so the image has not been built or run. The payment integration service and database remain unverified.
+Docker is installed, but daemon access is denied even outside the sandbox; image builds, Compose startup and the SDK-container test command remain unverified. Windows and macOS execution was not exercised. The payment integration service and database are not implemented.
 
 ## Remaining work
 
