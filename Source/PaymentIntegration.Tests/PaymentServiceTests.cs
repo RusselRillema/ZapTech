@@ -639,7 +639,7 @@ public sealed class PaymentServiceTests
             Session.Setup(session => session.DisposeAsync()).Callback(() => Calls.Add("dispose")).Returns(ValueTask.CompletedTask);
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
-                    clock, new FnbCardAcceptorNameFormatter()),
+                    clock, new CardAcceptorNameFormatterFactory(new FnbCardAcceptorNameFormatter())),
                 new PaymentResponseProcessor(), clock, NullLogger<PaymentService>.Instance);
         }
 

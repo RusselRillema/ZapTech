@@ -38,7 +38,8 @@ public static class PaymentIntegrationApplication
                 AllowAutoRedirect = false
             });
         builder.Services.AddSingleton<IPaymentRepository, PaymentRepository>();
-        builder.Services.AddSingleton<ICardAcceptorNameFormatter, FnbCardAcceptorNameFormatter>();
+        builder.Services.AddSingleton<FnbCardAcceptorNameFormatter>();
+        builder.Services.AddSingleton<CardAcceptorNameFormatterFactory>();
         builder.Services.AddSingleton<AcmeRequestFactory>();
         builder.Services.AddScoped<PaymentResponseProcessor>();
         builder.Services.AddScoped<PaymentService>();
