@@ -71,7 +71,7 @@ cp -i env.local.example .env
 
 Edit `.env`: replace the example Acme credentials. The database connection string matches the setup below; adjust its host/port if your PostgreSQL server differs.
 
-Create the database **once**, using your PostgreSQL administrator account (replace `postgres` if needed). This creates the schema, procedures and sample customers/cards/merchants/payments:
+Create the database **once** as a PostgreSQL administrator (replace `postgres` if needed):
 
 ```text
 psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/Sql/setup.sql
@@ -154,19 +154,7 @@ curl -fS "http://127.0.0.1:5080/reports/payments/daily?date=2026-11-04" -o daily
 
 Keep the same `appPaymentId` when retrying: identical details return the stored payment; changed details return 409. Reports accept `yyyy-MM-dd` and group daily counts/totals by sub-merchant and currency.
 
-Fresh database setup includes 15 synthetic payments across three merchants for the **4 November 2026 (SAST)** sample report: approvals, declines, refunds, a reversal and unresolved payments, plus activity on adjacent days. The sample is local reporting data; it does not submit transactions to Acme.
-
-For an **existing database**, load the report samples once using either command below (replace `postgres` if your administrator differs). Rerunning preserves existing payments and histories; no database reset is needed.
-
-```text
-docker compose exec -T db psql -U postgres -d payment_integration --single-transaction -f /opt/paymentintegration/database/005_SeedReportData.sql
-```
-
-Or natively:
-
-```text
-psql -h 127.0.0.1 -p 5432 -U postgres -d payment_integration --single-transaction -f Source/PaymentIntegration/Database/Sql/005_SeedReportData.sql
-```
+Fresh setup includes sample payments for **2026-11-04**. For existing databases, run the [report seed script](Source/PaymentIntegration/Database/Sql/005_SeedReportData.sql) as a PostgreSQL administrator in one transaction.
 
 The environment templates configure Acme callbacks to `POST /notifications/payment-advice` (Basic authentication) and `POST /notifications/transaction-status` (HMAC signature). API callers need no authentication.
 
