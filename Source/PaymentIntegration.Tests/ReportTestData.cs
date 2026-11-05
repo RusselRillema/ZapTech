@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Time.Testing;
+using Moq;
 using PaymentIntegration.Payments.Models;
 using PaymentIntegration.Payments.Processing;
 using PaymentIntegration.Reports;
@@ -40,5 +42,16 @@ internal static class ReportTestData
         var status = new TransactionStatusProcessor();
         var processor = new PaymentEventProcessor(new PaymentResponseProcessor(status), status);
         return new(processor, Microsoft.Extensions.Logging.Abstractions.NullLogger<PaymentHistoryReconstructor>.Instance);
+    }
+
+    public static (PaymentReportService Service, Mock<IPaymentReportRepository> Repository) CreateService(
+        IReadOnlyList<PaymentReportHistory> histories)
+    {
+        var repository = new Mock<IPaymentReportRepository>(MockBehavior.Strict);
+        repository.Setup(value => value.GetHistoryAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(histories);
+        var service = new PaymentReportService(repository.Object, Reconstructor(),
+            new FakeTimeProvider(DateTimeOffset.Parse("2026-11-06T12:00:00Z")));
+        return (service, repository);
     }
 }

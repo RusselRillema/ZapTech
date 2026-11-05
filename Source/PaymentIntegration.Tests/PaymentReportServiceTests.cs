@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using Moq;
 using PaymentIntegration.Reports;
 using Xunit;
@@ -17,7 +16,7 @@ public sealed class PaymentReportServiceTests
         var payment = ReportTestData.Payment();
         var history = new PaymentReportHistory(payment, "Merchant A",
             [ReportTestData.Outcome(payment), ReportTestData.Adjustment(payment)]);
-        var (service, repository) = Service([history]);
+        var (service, repository) = ReportTestData.CreateService([history]);
 
         var report = await service.GetDailyAsync(new(2026, 11, day), CancellationToken.None);
 
@@ -43,7 +42,7 @@ public sealed class PaymentReportServiceTests
         var usd = ReportTestData.Payment() with { CurrencyCode = "USD", RequestedAmount = 2500 };
         var other = ReportTestData.Payment() with { SubMerchantId = "merchant-b", RequestedAmount = 4000 };
         var future = ReportTestData.Payment() with { CreatedAt = DateTimeOffset.Parse("2026-11-05T00:00:00Z") };
-        var (service, _) = Service([
+        var (service, _) = ReportTestData.CreateService([
             new(zar, "Merchant A", [ReportTestData.Outcome(zar)]),
             new(usd, "Merchant A", [ReportTestData.Outcome(usd, amount: 2500)]),
             new(other, "Merchant B", [ReportTestData.Outcome(other, amount: 2000)]),
@@ -64,7 +63,7 @@ public sealed class PaymentReportServiceTests
         var declined = ReportTestData.Payment() with { RequestedAmount = 4250 };
         var failed = ReportTestData.Payment() with { RequestedAmount = 9000 };
         var rejection = ReportTestData.Outcome(failed) with { HttpStatusCode = 400 };
-        var (service, _) = Service([
+        var (service, _) = ReportTestData.CreateService([
             new(declined, "Merchant A", [ReportTestData.Outcome(declined, code: "05", amount: null)]),
             new(failed, "Merchant A", [rejection])
         ]);
@@ -84,7 +83,7 @@ public sealed class PaymentReportServiceTests
         var payment = ReportTestData.Payment();
         var refund = ReportTestData.Adjustment(payment);
         var duplicate = refund with { PaymentEventId = Guid.NewGuid(), ReceivedAt = refund.ReceivedAt.AddSeconds(1) };
-        var (service, _) = Service([new(payment, "Merchant A", [ReportTestData.Outcome(payment), refund, duplicate])]);
+        var (service, _) = ReportTestData.CreateService([new(payment, "Merchant A", [ReportTestData.Outcome(payment), refund, duplicate])]);
 
         var report = await service.GetDailyAsync(new(2026, 11, 5), CancellationToken.None);
 
@@ -99,7 +98,7 @@ public sealed class PaymentReportServiceTests
     {
         var first = ReportTestData.Payment() with { RequestedAmount = long.MaxValue };
         var second = ReportTestData.Payment() with { RequestedAmount = long.MaxValue };
-        var (service, _) = Service([
+        var (service, _) = ReportTestData.CreateService([
             new(first, "Merchant A", [ReportTestData.Outcome(first, amount: long.MaxValue)]),
             new(second, "Merchant A", [ReportTestData.Outcome(second, amount: long.MaxValue)])
         ]);
@@ -107,16 +106,5 @@ public sealed class PaymentReportServiceTests
         var report = await service.GetDailyAsync(new(2026, 11, 4), CancellationToken.None);
 
         Assert.Equal(18446744073709551614m, Assert.Single(report.Summaries).TotalApproved);
-    }
-
-    internal static (PaymentReportService Service, Mock<IPaymentReportRepository> Repository) Service(
-        IReadOnlyList<PaymentReportHistory> histories)
-    {
-        var repository = new Mock<IPaymentReportRepository>(MockBehavior.Strict);
-        repository.Setup(value => value.GetHistoryAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(histories);
-        var service = new PaymentReportService(repository.Object, ReportTestData.Reconstructor(),
-            new FakeTimeProvider(DateTimeOffset.Parse("2026-11-06T12:00:00Z")));
-        return (service, repository);
     }
 }

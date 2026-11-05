@@ -13,7 +13,7 @@ using Xunit;
 
 namespace PaymentIntegration.Tests;
 
-public sealed class TransactionStatusTests
+public sealed class TransactionStatusEndpointTests
 {
     private const string Route = "/notifications/transaction-status";
     // Published Acme specification example, independently of our signing helper.
