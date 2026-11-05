@@ -32,7 +32,7 @@ docker compose up --build --wait
 docker compose ps
 ```
 
-Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
+The database uses `db:5432` within the Compose network; no database port is published on the host, so local PostgreSQL can run alongside it. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
 
 Stop and remove containers/network, keeping database data:
 
