@@ -129,11 +129,9 @@ Or **natively**:
 dotnet run --project Source/PaymentIntegration.Demo
 ```
 
-Choose a numbered scenario and press Enter; each run returns to the menu. Output shows elapsed time, the payment request (A), Acme controls/callbacks (B), stored-state checks and request/response JSON. A/B identify asynchronous flows rather than fixed threads. Choose `0` to exit or **Ctrl+C** to cancel. Option `5` demonstrates Advice arriving while the original request waits; option `6` demonstrates timeout recovery.
+Choose a scenario and press Enter. Each run shows the calls, waits and responses, then returns to the menu. Use `0` to exit or **Ctrl+C** to cancel. Pass `--help` for command-line options.
 
-Single-scenario commands remain available: append `approval` to the Docker command or `-- approval` to the native command (substitute another scenario name as needed). Use `--list`, `--list-adjustments` or `--help` for command-line options; Docker scripts can retain `-T` when running these commands.
-
-Run scenarios sequentially against a dedicated local stack; they retain payments for audit. The optional script `bash Scripts/run-demos.sh --include-adjustments` requires Bash and Docker, starts the stack and runs all twelve scenarios, including refunds/reversals. Use `bash Scripts/run-demos.sh --help` for options.
+To run all scenarios automatically (Docker and Bash required): `bash Scripts/run-demos.sh --include-adjustments`. Runs retain payment history.
 
 Native demos default to ports 5080/5081; override `DEMO_PAYMENT_BASE_URL` / `DEMO_ACME_BASE_URL` for other ports. Optional `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID`, `DEMO_SUB_MERCHANT_ID`, `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` select existing records and values (defaults match the API example).
 
