@@ -1,6 +1,6 @@
 # Zapper Assessment
 
-.NET 8 payment submission, status and callback service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Further reconciliation and reporting remain unfinished.
+.NET 8 payment submission, status, callback and daily PDF reporting service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Further reconciliation remains unfinished.
 
 ## Choose a startup mode
 
@@ -20,7 +20,7 @@ Copy [env.local.example](env.local.example) (native) or [.env.docker.example](.e
 
 Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
 
-PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose starts `payments`, `acme` and `db` together; host HTTP ports default to 5080 and 5081.
+PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status and report reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose starts `payments`, `acme` and `db` together; host HTTP ports default to 5080 and 5081.
 
 ## Database setup and removal
 
@@ -79,6 +79,21 @@ Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app
 Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending until a submission or RTTQ response supplies it; otherwise later reconciliation is required.
 
 Reversals and refunds arrive at `POST /notifications/transaction-status`, matching `ACME_STATUS_WEBHOOK_URL`. Configure the same `ACME_WEBHOOK_SECRET` in the receiver and stub. The receiver verifies `x-signature` against the exact body bytes and acknowledges only after commit. Adjustments update `RemainingAmount` and expose PartiallyRefunded, Refunded or Reversed states. A full reversal supersedes refunds; partial reversals are Ignored. Refunds follow switch timestamp and event identifier order; the first over-limit refund and all later refunds are Ignored. Unknown references and conflicting outcomes remain Pending. See [step 6 decisions](Docs/Step6-Transaction-Status-Decisions.md) for confirmed rules and defaults chosen for review.
+
+## Daily payment report
+
+`GET http://127.0.0.1:5080/reports/payments/daily?date=2026-11-03` downloads a PDF grouped by sub-merchant/currency. It shows the eight required daily approval, decline, reversal and refund counts/totals, plus requested payments/value, end-of-day remaining/pending approval values and a subsequent-activity flag. The date is required in `yyyy-MM-dd` format; invalid dates return 400 and generation failures return 503. Dates without payments return an explicit empty report.
+
+Daily activity uses Acme transaction time in Africa/Johannesburg, falling back to receipt time when absent. Remaining/pending balances cover all payments created before that day's end. Later activity only sets a warning flag; later transaction details are excluded. Reports reconstruct history in memory without updating payments, applying reconciliation or calling Acme. ZAR is displayed in rand; other currencies are explicitly labelled in minor units.
+
+Fresh setup includes `004_ReportingReads.sql`. For an existing database, connect as the deployment owner to `payment_integration` and apply it once before restarting the updated service:
+
+```text
+BEGIN;
+\i Source/PaymentIntegration/Database/004_ReportingReads.sql
+GRANT EXECUTE ON PROCEDURE public.payments_get_report_history(timestamptz) TO payment_integration_app;
+COMMIT;
+```
 
 ## Acme operation
 
