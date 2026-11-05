@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      include_adjustments:
+        description: Run adjustment demos only after step 6 code and deployment SQL are included in this ref
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,10 +43,70 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Run every supported scenario through the real Docker stack
+      - name: Run selected scenario suite through the real Docker stack
         env:
           DEMO_ENV_FILE: .env.docker.example
-        run: bash Scripts/run-demos.sh
+          INCLUDE_ADJUSTMENTS: ${{ inputs.include_adjustments && 'true' || 'false' }}
+        run: |
+          if [[ "$INCLUDE_ADJUSTMENTS" == true ]]; then
+            bash Scripts/run-demos.sh --include-adjustments
+          else
+            bash Scripts/run-demos.sh
+          fi
+
+      - name: Application logs
+        if: always()
+        run: docker compose --env-file .env.docker.example logs --no-color --tail=100 db acme payments
+
+      - name: Remove this CI stack
+        if: always()
+        run: docker compose --env-file .env.docker.example down --volumes
+
+  adjustment-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COMPOSE_PROJECT_NAME: zentech-adjustments-ci
+      POSTGRES_PASSWORD: local_ci_bootstrap_only
+      # Published PR #29 dependency. This job integrates it only in the CI workspace.
+      STEP6_COMMIT: b36a6b5f78334eb28d0e03e33c604ead28960d4a
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assemble the published callback and demo changes without committing
+        shell: bash
+        run: |
+          git cat-file -e "$STEP6_COMMIT^{commit}"
+          if ! git -c user.name='Integration CI' -c user.email='integration-ci@invalid.example' merge --no-commit --no-ff "$STEP6_COMMIT"; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            test -n "$conflicts"
+            while IFS= read -r path; do
+              case "$path" in
+                README.md|SOLUTION.md)
+                  git checkout --ours -- "$path"
+                  git add -- "$path"
+                  ;;
+                *) printf 'Unexpected dependency conflict: %s\n' "$path" >&2; exit 1 ;;
+              esac
+            done <<< "$conflicts"
+          fi
+          git diff --exit-code --diff-filter=U
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.1.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run the integrated database-free tests
+        run: dotnet test ZenTech.sln --configuration Release
+
+      - name: Run all original and adjustment demonstrations against the published callback
+        env:
+          DEMO_ENV_FILE: .env.docker.example
+        run: bash Scripts/run-demos.sh --include-adjustments
 
       - name: Application logs
         if: always()

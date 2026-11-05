@@ -7,16 +7,23 @@ if (args is ["--list"])
         Console.WriteLine(scenario);
     return 0;
 }
+if (args is ["--list-adjustments"])
+{
+    foreach (var scenario in DemoRunner.AdjustmentScenarios)
+        Console.WriteLine(scenario);
+    return 0;
+}
 if (args is ["--help"] or ["-h"])
 {
-    Console.WriteLine("Usage: PaymentIntegration.Demo <scenario> | --list");
+    Console.WriteLine("Usage: PaymentIntegration.Demo <scenario> | --list | --list-adjustments");
     Console.WriteLine("Scenarios: " + string.Join(", ", DemoRunner.Scenarios));
     Console.WriteLine("Use a dedicated Acme stub with ACME_ENABLE_CONTROLS=true; run scenarios sequentially.");
     Console.WriteLine("Set ACME_API_KEY; optionally DEMO_PAYMENT_BASE_URL, DEMO_ACME_BASE_URL and the DEMO_* catalogue settings described in README.md.");
-    Console.WriteLine("Reversal and refund demonstrations await Task 1 Step 6.");
+    Console.WriteLine("Opt-in step 6 scenarios: " + string.Join(", ", DemoRunner.AdjustmentScenarios));
+    Console.WriteLine("Adjustment demonstrations require the published Task 1 Step 6 implementation and its deployment SQL.");
     return 0;
 }
-if (args.Length != 1 || !DemoRunner.Scenarios.Contains(args[0], StringComparer.Ordinal))
+if (args.Length != 1 || !DemoRunner.Scenarios.Concat(DemoRunner.AdjustmentScenarios).Contains(args[0], StringComparer.Ordinal))
 {
     Console.Error.WriteLine("Choose one supported scenario. Use --list or --help.");
     return 2;

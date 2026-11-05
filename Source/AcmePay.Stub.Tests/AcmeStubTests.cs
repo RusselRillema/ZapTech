@@ -215,19 +215,52 @@ public sealed class AcmeStubTests
         Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
     }
 
-    [Fact]
-    public async Task Partial_refund_is_explicitly_unimplemented_and_leaves_the_payment_approved()
+    [Theory]
+    [InlineData("refund")]
+    [InlineData("reversal")]
+    public async Task Partial_adjustment_control_is_explicitly_unimplemented_and_leaves_the_payment_approved(string route)
     {
         await using var host = await StubHost.StartAsync();
         using var submitted = await host.SubmitAsync();
         Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
-        using var response = await host.Client.PostAsJsonAsync("/__stub/transactions/attempt-1/refund", new { Amount = 1000 });
+        using var response = await host.Client.PostAsJsonAsync($"/__stub/transactions/attempt-1/{route}", new { Amount = 1000 });
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
         using var query = await host.QueryAsync();
         using var body = JsonDocument.Parse(await query.Content.ReadAsByteArrayAsync());
         Assert.Equal("Success", body.RootElement.GetProperty("PaymentResponse").GetProperty("TransactionStatus").GetString());
         await host.StopStubAsync();
         Assert.Single(host.Deliveries);
+    }
+
+    [Theory]
+    [InlineData("refund", "reversal")]
+    [InlineData("reversal", "refund")]
+    public async Task Both_full_adjustment_notifications_can_be_generated_and_RTTQ_retains_reversal_precedence(
+        string first, string second)
+    {
+        await using var host = await StubHost.StartAsync();
+        using var submitted = await host.SubmitAsync();
+        Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+        await host.NextCallbackAsync();
+        var identities = new HashSet<string>();
+        foreach (var route in new[] { first, second })
+        {
+            using var triggered = await host.Client.PostAsJsonAsync($"/__stub/transactions/attempt-1/{route}", new { Amount = 1999 });
+            Assert.Equal(HttpStatusCode.Accepted, triggered.StatusCode);
+            var delivered = await host.NextCallbackAsync();
+            Assert.Equal("/status", delivered.Path);
+            using var body = JsonDocument.Parse(delivered.Body);
+            Assert.Equal(route == "refund" ? "Refund" : "Reversal", body.RootElement.GetProperty("transactionType").GetString());
+            Assert.True(identities.Add(body.RootElement.GetProperty("transactionUUID").GetString()!));
+            Assert.Equal(1999, body.RootElement.GetProperty("transactionAmount").GetInt64());
+            using var repeated = await host.Client.PostAsJsonAsync($"/__stub/transactions/attempt-1/{route}", new { Amount = 1999 });
+            Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
+        }
+        using var queried = await host.QueryAsync();
+        using var result = JsonDocument.Parse(await queried.Content.ReadAsByteArrayAsync());
+        Assert.Equal("Reversed", result.RootElement.GetProperty("PaymentResponse").GetProperty("TransactionStatus").GetString());
+        await host.StopStubAsync();
+        Assert.Equal(3, host.Deliveries.Count);
     }
 
     [Theory]
