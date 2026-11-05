@@ -1,32 +1,71 @@
 # Zapper Assessment
 
-Run the payment API, Acme Pay stub and PostgreSQL locally using either option below. Commands use Bash (Linux, macOS or Windows via WSL/Git Bash), from the repository root. The copy commands ask before replacing an existing `.env`.
+Run the payment API, Acme Pay stub and PostgreSQL locally using either option below, from the repository root. Commands work in Windows CMD, macOS and Linux unless labelled. Copy commands ask before replacing an existing `.env`.
 
 ## Run with Docker
 
 Requires Docker with Compose and a running Docker engine. The example includes all settings and development credentials; no editing or local .NET/PostgreSQL installation needed.
 
-```bash
+```text
 docker --version
 docker compose version
 docker info
+```
+
+Copy settings in **Windows CMD**:
+
+```bat
+copy /-Y .env.docker.example .env
+```
+
+Or **macOS/Linux**:
+
+```sh
 cp -i .env.docker.example .env
+```
+
+Start the stack:
+
+```text
 docker compose config --quiet
 docker compose up --build --wait
 docker compose ps
 ```
 
-Stop with `docker compose down`; database data is retained. **Adding `--volumes` deletes the database data.** Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
+Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
+
+Stop and remove containers/network, keeping database data:
+
+```text
+docker compose down
+```
+
+Or **also delete the database data**:
+
+```text
+docker compose down --volumes
+```
 
 ## Run natively
 
 Requires the .NET 8 SDK, PostgreSQL 18 running locally, and PostgreSQL command-line tools. Check dependencies and server availability:
 
-```bash
+```text
 dotnet --list-sdks
 dotnet --list-runtimes
 psql --version
 pg_isready -h 127.0.0.1 -p 5432
+```
+
+Copy settings in **Windows CMD**:
+
+```bat
+copy /-Y env.local.example .env
+```
+
+Or **macOS/Linux**:
+
+```sh
 cp -i env.local.example .env
 ```
 
@@ -34,29 +73,37 @@ Edit `.env`: replace the example Acme credentials. The database connection strin
 
 Create the database **once**, using your PostgreSQL administrator account (replace `postgres` if needed). This creates the schema, procedures and sample customers/cards/merchants:
 
-```bash
+```text
 psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/setup.sql
 ```
 
 Start Acme in one terminal:
 
-```bash
+```text
 dotnet run --project Source/AcmePay.Stub -- --urls http://127.0.0.1:5081
 ```
 
 Start the payment API in a second terminal, also from the repository root:
 
-```bash
+```text
 dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080
 ```
 
-Stop each with Ctrl+C. The database persists; restarting Acme clears its in-memory transactions and callbacks.
+Stop each application with **Ctrl+C** in its terminal; the database persists. Restarting Acme clears its in-memory transactions and callbacks.
+
+To **delete the application database and login**, stop the apps, disconnect other clients from `payment_integration`, and run as the same PostgreSQL administrator used for setup:
+
+```text
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/remove.sql
+```
+
+The PostgreSQL server and other databases remain.
 
 ## Check it is running
 
 For either mode, run in another terminal (`curl` required):
 
-```bash
+```text
 curl -fS http://127.0.0.1:5080/health
 curl -fS http://127.0.0.1:5081/health
 ```
@@ -69,25 +116,27 @@ Database setup only supports a fresh database/login and Docker only initializes 
 
 ## Demos and tests
 
-With the stack running and `ACME_ENABLE_CONTROLS=true` (the template default), run an approval demo:
+With the stack running and `ACME_ENABLE_CONTROLS=true` (the template default), run an approval demo with **Docker**:
 
-```bash
-# Docker
+```text
 docker compose build demo
 docker compose run --rm --no-deps -T demo --list
 docker compose run --rm --no-deps -T demo approval
+```
 
-# Native (use instead of the Docker commands)
+Or **natively**:
+
+```text
 dotnet run --project Source/PaymentIntegration.Demo -- approval
 ```
 
-Run scenarios sequentially against a dedicated local stack; they retain payments for audit. With Docker and Bash, `bash Scripts/run-demos.sh --include-adjustments` starts the stack and runs all twelve scenarios, including refunds/reversals. Use `bash Scripts/run-demos.sh --help` for options.
+Run scenarios sequentially against a dedicated local stack; they retain payments for audit. The optional script `bash Scripts/run-demos.sh --include-adjustments` requires Bash and Docker, starts the stack and runs all twelve scenarios, including refunds/reversals. Use `bash Scripts/run-demos.sh --help` for options.
 
 Native demos default to ports 5080/5081; override `DEMO_PAYMENT_BASE_URL` / `DEMO_ACME_BASE_URL` for other ports. Optional `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID`, `DEMO_SUB_MERCHANT_ID`, `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` select existing records and values (defaults match the API example).
 
 Run application tests with the .NET SDK; no running services or credentials needed:
 
-```bash
+```text
 dotnet test ZenTech.sln --configuration Release
 ```
 
@@ -95,13 +144,11 @@ dotnet test ZenTech.sln --configuration Release
 
 Submit a payment using the seeded records (amount is in minor units: `1999` = R19.99):
 
-```bash
-curl -sS http://127.0.0.1:5080/payments \
-  -H 'Content-Type: application/json' \
-  -d '{"appPaymentId":"app-payment-001","customerId":"860e4537-28e4-4b83-a399-d4bd13f63a26","customerCardId":"8ee3f008-84f5-4152-80a5-21821abdd045","subMerchantId":"ZAP9193145856","amount":1999,"currencyCode":"ZAR"}'
+```text
+curl -sS http://127.0.0.1:5080/payments -H "Content-Type: application/json" -d "{\"appPaymentId\":\"app-payment-001\",\"customerId\":\"860e4537-28e4-4b83-a399-d4bd13f63a26\",\"customerCardId\":\"8ee3f008-84f5-4152-80a5-21821abdd045\",\"subMerchantId\":\"ZAP9193145856\",\"amount\":1999,\"currencyCode\":\"ZAR\"}"
 
-curl -sS 'http://127.0.0.1:5080/payments?appPaymentId=app-payment-001'
-curl -fS 'http://127.0.0.1:5080/reports/payments/daily?date=2026-11-05' -o daily-payments.pdf
+curl -sS "http://127.0.0.1:5080/payments?appPaymentId=app-payment-001"
+curl -fS "http://127.0.0.1:5080/reports/payments/daily?date=2026-11-05" -o daily-payments.pdf
 ```
 
 Keep the same `appPaymentId` when retrying: identical details return the stored payment; changed details return 409. Reports accept `yyyy-MM-dd` and group daily counts/totals by sub-merchant and currency.
