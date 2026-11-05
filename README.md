@@ -1,179 +1,111 @@
 # Zapper Assessment
 
-.NET 8 payment submission, status, callback and daily PDF reporting service, Acme Pay stub and PostgreSQL 18 schema for [the assignment](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf). Further reconciliation remains unfinished.
+Run the payment API, Acme Pay stub and PostgreSQL locally using either option below. Commands use Bash (Linux, macOS or Windows via WSL/Git Bash), from the repository root. The copy commands ask before replacing an existing `.env`.
 
-## Choose a startup mode
+## Run with Docker
 
-Run commands from the repository root. Native database deployment uses your existing PostgreSQL server and administrator connection; Acme and its tests need no database.
+Requires Docker with Compose and a running Docker engine. The example includes all settings and development credentials; no editing or local .NET/PostgreSQL installation needed.
 
-| Product / mode | Quick prerequisites | Start |
-| --- | --- | --- |
-| Native database | `psql --version` (18.x); existing privileged connection | Run the setup script below. |
-| Native Acme | `dotnet --list-sdks`, `dotnet --list-runtimes`; .NET 8 SDK and runtimes | `dotnet run --project Source/AcmePay.Stub` |
-| Native PaymentIntegration | .NET 8 SDK and runtimes | `dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080` |
-| Compose (all three services) | `docker --version`, `docker compose version`, `docker info` | `docker compose up --build --wait` |
-| Existing tests | .NET 8 SDK, or Docker | Commands below; no running services or credentials needed. |
-
-Install missing software using the official [PostgreSQL](https://www.postgresql.org/download/), [.NET](https://dotnet.microsoft.com/download/dotnet/8.0) or [Docker](https://docs.docker.com/get-started/get-docker/) instructions. Container startup needs no host PostgreSQL or .NET installation.
-
-Copy [env.local.example](env.local.example) (native) or [.env.docker.example](.env.docker.example) (containers) to root `.env` using your editor/file manager. Preserve customised files; replace example Acme credentials and callback URLs. PaymentIntegration also needs `ACME_BASE_URL` and `PAYMENT_DATABASE_CONNECTION_STRING`. For Docker's database, set `POSTGRES_PASSWORD`; `POSTGRES_USER` defaults to `postgres` and `POSTGRES_PORT` to `5432`.
-
-Both native applications load optional `.env` settings without overriding existing environment variables; Compose gives shell variables precedence too. Single-quote literal `$`/`#` values. Keep `.env` private: it contains plaintext secrets and is excluded from Git and Docker builds. Required settings are checked by the service being started.
-
-PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/health) without external dependencies; payment submissions require the database and Acme configuration, while status and report reads require only the database configuration. Its native command selects port 5080, overriding the shared `.env` setting for Acme's port 5081. Compose starts `payments`, `acme` and `db` together; host HTTP ports default to 5080 and 5081.
-
-## Database setup and removal
-
-Using your existing privileged `psql` connection, outside a transaction, run:
-
-```text
-\i Source/PaymentIntegration/Database/setup.sql
-```
-
-The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It creates catalogue, payment and event tables plus payment procedures, and seeds five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
-
-For removal, stop application connections first, then explicitly run:
-
-```text
-\i Source/PaymentIntegration/Database/remove.sql
-```
-
-Only the application database and login are removed; the server and other databases remain. The scripts use psql commands and work from Windows, macOS and Linux terminals with an already configured connection.
-
-## Docker Compose
-
-```text
+```bash
+docker --version
+docker compose version
+docker info
+cp -i .env.docker.example .env
 docker compose config --quiet
 docker compose up --build --wait
 docker compose ps
-docker compose logs --tail=100 db acme payments
 ```
 
-For one service, use `docker compose up -d db` or `docker compose up --build -d acme`; each can start without the other's credentials. Database access defaults to `127.0.0.1:5432` on the host and `db:5432` inside Compose. Docker's initializer runs the same setup SQL after creating the server. Its authenticated health check runs inside the database container and reads no application tables.
+Stop with `docker compose down`; database data is retained. **Adding `--volumes` deletes the database data.** Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
 
-PaymentIntegration waits for the database's authenticated health check and Acme's HTTP health check. Both application containers run as the non-root .NET `app` user on port 8080; their `--health-check` command probes the existing liveness endpoint. Liveness does not prove payment processing or schema compatibility. Compose callbacks use `http://payments:8080`, outgoing Acme calls use `http://acme:8080`, and database calls use `db:5432`. Use the Docker environment example when all services run in containers; native host addresses are different.
+## Run natively
 
-Stop/remove containers with `docker compose down`; the database volume persists. **`docker compose down --volumes` deletes the project database volume.** Initialization runs only on empty storage. A failed setup may leave partial initialization: inspect logs and repair as administrator, or explicitly remove a disposable volume. Restart does not resume setup. Existing databases require explicit future schema deployment; these scripts are not migrations.
+Requires the .NET 8 SDK, PostgreSQL 18 running locally, and PostgreSQL command-line tools. Check dependencies and server availability:
 
-## Submit a payment
-
-Send JSON to `POST http://127.0.0.1:5080/payments`:
-
-```json
-{
-  "appPaymentId": "app-payment-001",
-  "customerId": "860e4537-28e4-4b83-a399-d4bd13f63a26",
-  "customerCardId": "8ee3f008-84f5-4152-80a5-21821abdd045",
-  "subMerchantId": "ZAP9193145856",
-  "amount": 1999,
-  "currencyCode": "ZAR"
-}
+```bash
+dotnet --list-sdks
+dotnet --list-runtimes
+psql --version
+pg_isready -h 127.0.0.1 -p 5432
+cp -i env.local.example .env
 ```
 
-Amount is a positive integer in the currency's lowest unit; currency and the customer's selected stored-card ID are required. The response includes the payment ID, current state, requested/approved/remaining amounts and `isFullyReconciled`. Fully reconciled outcomes return 200; unresolved outcomes return 202. Acme 400/401/409 and final 429 responses mean Failed. E29 responses with valid Retry-After seconds retry the same payment after max(3 seconds, twice Retry-After), within a 60-second submission window.
+Edit `.env`: replace the example Acme credentials. The database connection string matches the setup below; adjust its host/port if your PostgreSQL server differs.
 
-Timeouts, connection failures and 500–504 leave the outcome unknown. If submission remains unresolved and time remains, the service makes one Real Time Transaction Query (RTTQ) using the same transaction ID, allowing up to 10 seconds within that 60-second window. RTTQ can establish an Approved or Declined outcome during the same request; inconclusive results remain Unresolved for later reconciliation. Identical repeats return the saved payment without another Acme call; changed details under the same app payment ID return 409. Keep the same identifier after a timeout. Further reconciliation is deferred.
+Create the database **once**, using your PostgreSQL administrator account (replace `postgres` if needed). This creates the schema, procedures and sample customers/cards/merchants:
 
-Read the stored status with `GET http://127.0.0.1:5080/payments?appPaymentId=app-payment-001`, URL-encoding the app's original payment identifier. Found payments return 200 with the same response fields as submission; unknown identifiers return 404. `isFullyReconciled` requires a known outcome, including PartiallyRefunded, Refunded or Reversed, and no pending events. Unknown amounts remain null. Reads do not apply events, change payment state or contact Acme.
-
-Payment Advice is received at `POST /notifications/payment-advice`, matching the example `ACME_ADVICE_URL`. Configure `ACME_MERCHANT_ID`, `ACME_ADVICE_USERNAME` and `ACME_ADVICE_PASSWORD`; the receiver uses HTTP Basic authentication and returns 200 after committing the audit event and any applicable state changes. Unknown transactions are retained as unlinked Pending events for investigation. Authorize/Capture advice is Ignored with reason `UnsupportedRequestType`. Approval advice lacking an authoritative approved amount remains Pending until a submission or RTTQ response supplies it; otherwise later reconciliation is required.
-
-Reversals and refunds arrive at `POST /notifications/transaction-status`, matching `ACME_STATUS_WEBHOOK_URL`. Configure the same `ACME_WEBHOOK_SECRET` in the receiver and stub. The receiver verifies `x-signature` against the exact body bytes and acknowledges only after commit. Adjustments update `RemainingAmount` and expose PartiallyRefunded, Refunded or Reversed states. A full reversal supersedes refunds; partial reversals are Ignored. Refunds follow switch timestamp and event identifier order; the first over-limit refund and all later refunds are Ignored. Unknown references and conflicting outcomes remain Pending. See [step 6 decisions](Docs/Step6-Transaction-Status-Decisions.md) for confirmed rules and defaults chosen for review.
-
-## Daily payment report
-
-`GET http://127.0.0.1:5080/reports/payments/daily?date=2026-11-03` downloads a PDF grouped by sub-merchant/currency. It shows the eight required daily approval, decline, reversal and refund counts/totals, plus requested payments/value, end-of-day remaining/pending approval values and a subsequent-activity flag. The date is required in `yyyy-MM-dd` format; invalid dates return 400 and generation failures return 503. Dates without payments return an explicit empty report.
-
-Daily activity uses Acme transaction time in Africa/Johannesburg, falling back to receipt time when absent. Remaining/pending balances cover all payments created before that day's end. Later activity only sets a warning flag; later transaction details are excluded. Reports reconstruct history in memory without updating payments, applying reconciliation or calling Acme. ZAR is displayed in rand; other currencies are explicitly labelled in minor units.
-
-Fresh setup includes `004_ReportingReads.sql`. For an existing database, connect as the deployment owner to `payment_integration` and apply it once before restarting the updated service:
-
-```text
-BEGIN;
-\i Source/PaymentIntegration/Database/004_ReportingReads.sql
-GRANT EXECUTE ON PROCEDURE public.payments_get_report_history(timestamptz) TO payment_integration_app;
-COMMIT;
+```bash
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/setup.sql
 ```
 
-## Acme operation
+Start Acme in one terminal:
 
-Both modes default to [http://localhost:5081/health](http://localhost:5081/health). Native listening uses `ASPNETCORE_URLS`; Compose fixes application listeners to port 8080 internally and publishes `ACME_HTTP_PORT` (default 5081) and `PAYMENT_HTTP_PORT` (default 5080). Stop native Acme with Ctrl+C. Restart loses its in-memory transactions, scenario configuration and callbacks.
-
-Native callbacks use `localhost`; callbacks between Compose services use the `payments` service name. For a mixed setup with a host receiver, explicitly use `host.docker.internal` and bind that receiver to an address reachable from containers. PaymentIntegration receives both Payment Advice and Transaction Status callbacks.
-
-Both API routes require `Authorization: Bearer <ACME_API_KEY>`:
-
-- `POST /api/payment`
-- `GET /apirttq/query/Merchant/{MerchantID}?TransactionID={id}` (or `OrderNumber={reference}`)
-
-Payment Advice uses Basic authentication; status callbacks use Base64 HMAC-SHA256 over the exact body bytes in `x-signature`. Valid payments are approved by default; partial events are unsupported.
-
-With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same bearer key. Use a dedicated stub instance and run scenarios sequentially: `POST /__stub/scenario` replaces defaults for all newly accepted payments, while each existing transaction retains its outcome and callback settings. `GET /__stub/scenario` shows the current defaults.
-
-```json
-{"paymentOutcome":"Declined","responseDelaySeconds":0,"holdCallbacks":false}
+```bash
+dotnet run --project Source/AcmePay.Stub -- --urls http://127.0.0.1:5081
 ```
 
-`paymentOutcome` is `Approved` (default) or `Declined` (acquirer code `05`, HTTP 200). `responseDelaySeconds` is 0–60 (default 0); `holdCallbacks` defaults to false. Send `{}` to restore defaults. Invalid updates return 400 without changing configuration.
+Start the payment API in a second terminal, also from the repository root:
 
-| Control | Behaviour |
-| --- | --- |
-| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate one full-amount event per type using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. Both types may be generated for one payment; RTTQ retains reversal precedence. |
-| `GET /__stub/transactions/{id}/callbacks` | List generated callback `identifier`, `kind` and `isHeld`; reading does not send anything. |
-| `GET /__stub/transactions/{id}` | Observe accepted/replayed submission count, configured reply delay and whether a delayed reply was interrupted. |
-| `POST /__stub/transactions/{id}/callbacks/{identifier}/send` | Queue a held callback or replay one using its original bytes and identity; returns 202, or 503 if the queue is full. |
+```bash
+dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080
+```
 
-`isHeld` means manual release is still required. Callback lists also expose `completedAttempts`, `acknowledgements` (HTTP 200 only) and `lastHttpStatusCode` from actual HTTP deliveries. Reads do not send callbacks or process events. A 202 from the send control only means queued; wait for an increased acknowledgement count to confirm receipt.
+Stop each with Ctrl+C. The database persists; restarting Acme clears its in-memory transactions and callbacks.
 
-For a timeout demonstration, configure `{"responseDelaySeconds":40,"holdCallbacks":true}` before submission: the reply exceeds PaymentIntegration's 35-second Acme timeout, but Acme retains the accepted outcome for RTTQ. The service can recover that outcome through its submission-time RTTQ call, so a timed-out Acme request can still produce a final Approved response. Observe the timeout and query in service logs; status reads during the delay show the stored Unresolved state. To demonstrate ordering, queue selected callbacks in the required order; to demonstrate duplicates, send the same identifier again. Replays do not apply a reversal/refund again.
+## Check it is running
 
-## Console demonstrations
+For either mode, run in another terminal (`curl` required):
 
-Start the stack with the Docker environment settings and `ACME_ENABLE_CONTROLS=true`, then run one scenario in a disposable runner container:
+```bash
+curl -fS http://127.0.0.1:5080/health
+curl -fS http://127.0.0.1:5081/health
+```
 
-```text
+Both should return `{"status":"healthy"}`. These are liveness checks; use the approval demo below to check the payment flow. For Docker troubleshooting: `docker compose logs --tail=100 db acme payments`.
+
+Both native apps load `.env`; existing shell variables take precedence in both modes. Use the matching environment template when switching modes: native URLs use the host, Docker URLs use service names. Keep `.env` private. The development database login is `payment_integration_app`, password `payment_integration_dev_only`, database `payment_integration`.
+
+Database setup only supports a fresh database/login and Docker only initializes empty storage. Existing databases need explicit schema deployment; restarting does not upgrade or repair them. Setup/removal details: [database scripts](Source/PaymentIntegration/Database/).
+
+## Demos and tests
+
+With the stack running and `ACME_ENABLE_CONTROLS=true` (the template default), run an approval demo:
+
+```bash
+# Docker
 docker compose build demo
 docker compose run --rm --no-deps -T demo --list
 docker compose run --rm --no-deps -T demo approval
+
+# Native (use instead of the Docker commands)
+dotnet run --project Source/PaymentIntegration.Demo -- approval
 ```
 
-The default six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Six adjustment scenarios are opt-in.
+Run scenarios sequentially against a dedicated local stack; they retain payments for audit. With Docker and Bash, `bash Scripts/run-demos.sh --include-adjustments` starts the stack and runs all twelve scenarios, including refunds/reversals. Use `bash Scripts/run-demos.sh --help` for options.
 
-Use a dedicated demo stack and run scenarios sequentially. Each run creates a new app payment identifier using the existing seeded customer/card/sub-merchant from the submission example, retains those payments for audit, and restores the previous stub scenario settings. To use other existing catalogue records, set `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID` and `DEMO_SUB_MERCHANT_ID`; `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` default to 1999 and ZAR. No data or schemas are created by the runner.
+Native demos default to ports 5080/5081; override `DEMO_PAYMENT_BASE_URL` / `DEMO_ACME_BASE_URL` for other ports. Optional `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID`, `DEMO_SUB_MERCHANT_ID`, `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` select existing records and values (defaults match the API example).
 
-`out-of-order` delivers Payment Advice before the delayed submission response, observes an Unresolved payment without an authoritative approved amount, and waits for the response to reconcile it. `timeout` verifies Acme observed its delayed reply being interrupted, then checks the service recovered approval before any advice was released. This exercises submission-time RTTQ recovery.
+Run application tests with the .NET SDK; no running services or credentials needed:
 
-For native execution, use `dotnet run --project Source/PaymentIntegration.Demo -- approval` from the repository root. It loads optional `.env` values, requires `ACME_API_KEY`, and defaults to host ports 5080/5081. Override `DEMO_PAYMENT_BASE_URL` and `DEMO_ACME_BASE_URL` for different host ports. The Compose runner uses internal service DNS automatically and needs no host .NET SDK.
-
-To build the runner, start/wait for the full Docker stack and run the six default scenarios sequentially:
-
-```text
-bash Scripts/run-demos.sh
-```
-
-The script requires Bash and Docker Compose, reads the configured root `.env`, obtains its scenario list from the console, and stops with a nonzero exit status on the first failure. Use `bash Scripts/run-demos.sh approval timeout` for selected scenarios, `--list` to list them or `--help` for setup options. `DEMO_ENV_FILE` selects another environment file; `COMPOSE_PROJECT_NAME` selects another dedicated stack. Existing containers and database audit data are retained; the script never resets a database or removes volumes. The two delayed scenarios take about 50 seconds together, in addition to build/startup time.
-
-The opt-in adjustment suite adds `reversal`, `refund`, `reversal-before-approval`, `refund-before-approval`, `refund-then-reversal` and `reversal-then-refund`. These check full outcomes, exact callback replays, late approval Advice preserving adjusted value, early adjustments and Advice remaining unresolved until AuthAmount arrives, and full reversal precedence in both delivery orders. All notifications are generated and signed by the stub. Run with:
-
-```text
-bash Scripts/run-demos.sh --include-adjustments
-docker compose run --rm --no-deps -T demo --list-adjustments
-```
-
-The callback implementation from [PR #29](https://github.com/RusselRillema/ZapTech/pull/29) is included. The `adjustment-compose` CI job ensures its published commit is present, then runs the real deployment SQL and all twelve scenarios. The ordinary Compose job retains the original six scenarios; manual input `include_adjustments` also enables the adjustment suite.
-
-Capability limits: partial refunds/reversals return 501 in the stub controls; multiple distinct refunds, cutoff ordering and partial-reversal rejection by the application therefore remain untested here. Callback acknowledgements and current state are observed, but internal audit classifications have no read API. There is also no supported API to inject an additional bank response after an adjustment is already applied; early-response reconsideration and late Advice are covered instead.
-
-## Tests and verification
-
-```text
+```bash
 dotnet test ZenTech.sln --configuration Release
 ```
 
-Or run the same suite in a temporary SDK container, without a local .NET installation:
+## Call the API
 
-```text
-docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
+Submit a payment using the seeded records (amount is in minor units: `1999` = R19.99):
+
+```bash
+curl -sS http://127.0.0.1:5080/payments \
+  -H 'Content-Type: application/json' \
+  -d '{"appPaymentId":"app-payment-001","customerId":"860e4537-28e4-4b83-a399-d4bd13f63a26","customerCardId":"8ee3f008-84f5-4152-80a5-21821abdd045","subMerchantId":"ZAP9193145856","amount":1999,"currencyCode":"ZAR"}'
+
+curl -sS 'http://127.0.0.1:5080/payments?appPaymentId=app-payment-001'
+curl -fS 'http://127.0.0.1:5080/reports/payments/daily?date=2026-11-05' -o daily-payments.pdf
 ```
 
-The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. Transaction Status service tests cover adjustment calculations and delivery ordering without a database. Compose CI separately runs the original six scenarios and the full twelve-scenario suite against PostgreSQL initialized by the real deployment SQL. Concurrency under multiple service instances and database failure handling remain outside that coverage. See [SOLUTION.md](SOLUTION.md) for verification limits.
+Keep the same `appPaymentId` when retrying: identical details return the stored payment; changed details return 409. Reports accept `yyyy-MM-dd` and group daily counts/totals by sub-merchant and currency.
+
+The environment templates configure Acme callbacks to `POST /notifications/payment-advice` (Basic authentication) and `POST /notifications/transaction-status` (HMAC signature). API callers need no authentication.
+
+See [SOLUTION.md](SOLUTION.md) for design, simulated Acme behaviour, verification limits and unfinished work (including further reconciliation), and the [assignment PDF](Docs/Zapper%20-%20Team_Lead%20Assignment.pdf) for requirements.
