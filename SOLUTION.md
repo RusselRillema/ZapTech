@@ -1,67 +1,164 @@
 # Solution
 
-## Database deployment
+## 1. Architecture and Design Decisions
 
-PostgreSQL 18 is permitted by the assignment and fits containerised deployment. One psql setup script serves native and Docker operation. Native users supply their existing server and administrative connection; Docker creates its server first. The SQL creates the database outside a transaction, then configures application access transactionally. Existing database/login names are rejected before creation; setup never resets credentials or deletes existing objects. Removal is explicit and refuses to force active connections closed.
+The solution consists of three main components: the .NET 8 Payment Integration service, a PostgreSQL database and a simulated Acme Pay gateway. I've also included a small console application to demonstrate the payment scenarios.
 
-The database name and application credentials are hard-coded development values, documented in the README. SQL deployment reads no environment files. Docker administrator settings and Acme runtime settings remain environment-based, with optional local `.env` files. This development shortcut is not production secret management; that remains part of the unfinished AWS design.
+Everything can run either through Docker Compose or natively. I wanted somebody reviewing the assignment to be able to get it running without installing unnecessary tooling or having to understand the entire solution first. The setup instructions are in `README.md`.
 
-The connected administrator owns the database and will own its objects. A separate non-admin application login receives `CONNECT`, schema `USAGE` and procedure `EXECUTE`, without direct table/sequence grants, creation privileges or administrator membership. Public database/schema access and default public routine execution are revoked. Password verifiers use SCRAM-SHA-256.
+### Payment processing
 
-The shared setup includes catalogue, payment and event tables, seed data and payment procedures in its existing transaction. Customer and sub-merchant primary keys are Zapper's supplied identifiers; card friendly names are unique per customer. Five synthetic customers, three sub-merchants and eight cards demonstrate the catalogue. Procedures use `SECURITY DEFINER`, a fixed trusted search path, explicit schema qualification and bound named arguments; the caller controls transactions. Existing databases need explicit schema deployment rather than replaying initial provisioning.
+A payment is recorded in the database before calling Acme. This gives us a local record even if the request times out or the connection fails.
 
-Single-record reads return explicit typed output columns. The small pending-event collection returns an array of the explicit `payment_event_result` type, mapped by Npgsql. Only Acme's variable audit payload remains JSONB. Every DAL command is a named procedure call; no cursor commands are needed. Permissions are configured centrally in `setup.sql`.
+I've made the following assumptions and decisions:
 
-Compose starts PaymentIntegration, Acme and PostgreSQL with loopback publishing. PaymentIntegration waits for database and Acme health; callbacks use Compose service DNS without going through the host. Non-root application images provide an HTTP liveness probe using their existing .NET runtime. A persistent volume retains PostgreSQL data; a thin first-start initializer invokes the shared setup file. Removal SQL is mounted outside the automatic initialization directory. The authenticated application-login health check proves connectivity and credentials, not procedure correctness. The Docker environment example supplies separate host ports and internal service addresses.
+- `AppPaymentId` is globally unique. I'd normally confirm this with the team responsible for the app.
+- Submitting the same `AppPaymentId` with identical details is treated as a retry. The existing payment is returned without calling Acme again. Changed payment details result in a conflict.
+- I added `CustomerCardId` to the request. A customer can have multiple stored cards, so the app needs to identify which card to use. A future endpoint could return the customer's available cards and friendly names.
+- Approved, Declined, Failed and Unresolved are separate states. In particular, an Acme timeout does not mean the payment failed.
+- The approved amount comes from Acme's payment response or Real Time Transaction Query (RTTQ), rather than assuming the requested amount was approved.
 
-## Payment submission
+When Acme does not provide a conclusive response, the service attempts one RTTQ using the original transaction identifier. I limited this to one attempt to keep the implementation manageable. In production I'd have a background process periodically checking unresolved payments until they can be reconciled or require investigation.
 
-`POST /payments` validates an explicit currency, positive minor-unit amount and selected stored card owned by the customer. The payment is committed before Acme is called. A unique app payment identifier coordinates creation across instances: matching repeats return the current stored outcome, and changed details return 409. Payment ID is Acme's TransactionID; a separately generated alphanumeric order reference has its first 12 characters protected by a database unique index.
+Notifications can be duplicated or arrive out of order. Rather than relying on their arrival order, I store the events and evaluate them against the current payment state.
 
-Acme submission responses, RTTQ responses, Payment Advice and Transaction Status share `PaymentEventService`: it begins a transaction, acquires the payment row lock and reads the latest persisted state. It inserts a Pending event, loads pending events, interprets outcomes and adjustments through injected C# processors, reconsiders them after an application, and atomically saves the payment and event states. Approved value comes only from AuthAmount, including partial authorisations; an acquirer decline is determined by its response code even when TransactionStatus says Success. The confirmed states distinguish Approved (acquirer approval), Declined (acquirer decline), Failed (Acme explicitly rejected the request with 400/401/409 or a final 429) and Unresolved (timeouts, connection failures or 500–504). A gateway 409 rejects this request without adopting the other transaction's ID. Unknown outcomes retain unknown amounts and require later reconciliation. Failed database transactions roll back and release their resources. Service tests verify orchestration, not database locking or commit semantics.
+All changes to a payment are processed within a database transaction using a row lock. This allows separate payments to run concurrently while preventing multiple service instances from updating the same payment simultaneously.
 
-`POST /notifications/payment-advice` authenticates Acme's Basic credentials before parsing the body or resolving the DAL. It validates the account and payload, preserves unknown fields in the audit payload, and acknowledges only after commit. Duplicate receipts are retained but do not reapply an outcome; currency/reference mismatches are Ignored and conflicting outcomes remain Pending. Unknown transactions are recorded with a NULL payment link and Pending state for investigation, with no automatic linking mechanism in this step. Authorize/Capture advice is Ignored with `UnsupportedRequestType` in ProcessingComment. Approval advice never supplies ApprovedAmount from Advice.Amount; it remains Pending when that amount is unknown. If submission remains unresolved, the service makes one RTTQ call using the same transaction ID, allowing up to 10 seconds within the 60-second submission window. Its response reconsiders pending advice using the locked persisted state; inconclusive outcomes require later reconciliation.
+### Acme integration
 
-`POST /notifications/transaction-status` verifies Base64 HMAC-SHA256 over the exact request bytes before parsing JSON. RRN lookup delegates to the existing payment lock procedure within the same transaction. C# reads the complete adjustment history, deduplicates switch identities and computes remaining value from authoritative approval. The confirmed lifecycle states are PartiallyRefunded, Refunded and Reversed. A full reversal closes the balance and supersedes refunds; partial reversals are Ignored. Refunds follow switch timestamp and event identifier order, stopping at the first over-limit event and ignoring it and all later refunds. Conflicting UUID duplicates remain Pending for investigation and preserve the established state, amounts and prior Applied/Ignored receipts, as confirmed in [Issue #34](https://github.com/RusselRillema/ZapTech/issues/34). Conflicting switch outcome indicators remain Pending with unknown remaining value. The [step 6 decision record](Docs/Step6-Transaction-Status-Decisions.md) separates confirmed rules from defaults chosen for review. Automatic linking and further reconciliation remain outside this implementation.
+One of the benefits I've found with AI-assisted development is that it often introduces good implementation practices without me having to explicitly request every detail. For example, the Acme client uses HTTP connection pooling and limits concurrent outbound requests. These weren't things I specifically included in my prompts, but they're useful safeguards when dealing with a potentially slow external service. Of course, these decisions still need to be reviewed rather than assuming that everything AI generates is appropriate.
 
-The Acme client reuses pooled HTTP connections, bounds concurrent calls to 20 with 40 queued requests per instance, uses a 35-second HTTP timeout and returns each response to the service for audit. Only HTTP 429/E29 with valid Retry-After seconds is automatically retried, using the same persisted payment identifiers and an asynchronous delay of max(3 seconds, twice Retry-After). Each response is recorded before waiting; no payment transaction or client concurrency lease is held during the delay. Retries share a 60-second submission window that continues if the caller disconnects. Received responses are persisted under a separate 30-second deadline, including after the submission window expires. Structured `ILogger<T>` messages carry operation and payment/event identifiers, excluding credentials, card tokens and raw payloads. FNB descriptor rules live behind `ICardAcceptorNameFormatter`; another bank can supply an implementation through DI without changing payment orchestration. FNB uses the confirmed ZAP* prefix and rejects oversized merchant/city fields.
+For Acme's `429/E29` rate-limit response, I used a fairly simple approach: wait for twice the supplied `Retry-After`, with a minimum of three seconds, and retry using the original transaction identity.
 
-## Payment status
+The documentation doesn't explain whether Acme's rate limits apply per IP address, merchant account or something else. With that information, I'd consider a shared rate limiter or token bucket approach. The current limiter works per application instance, not across the whole Acme account.
 
-`GET /payments?appPaymentId=...` uses the existing read-only `payments_get_by_app_id` procedure, which returns stored payment state and pending-event existence from one database snapshot. A query parameter accommodates the same identifiers accepted by submission, including URL-encoded slashes. The read service depends only on the repository and requires no Acme configuration. Submission and status share the response projection: `IsFullyReconciled` requires a known outcome, including PartiallyRefunded, Refunded and Reversed, and no pending events. Found payments return 200 even when unresolved; unknown app identifiers return 404. Reads neither process pending events nor query Acme; reconciliation remains separate.
+For the two notification endpoints, I provided AI with the explicit authentication requirements from Appendix A and had it implement them: Basic authentication for Payment Advice and HMAC-SHA256 for Transaction Status notifications. This is another example where providing the correct documentation and requirements was more important than writing the implementation myself.
 
-## Historical daily reporting
+I chose to treat the payment response or RTTQ as the authoritative source for the approved amount, rather than using the amount supplied in Payment Advice. I also chose to ignore `Authorize` and `Capture` Payment Advice notifications because this implementation only supports the direct payment flow.
 
-`GET /reports/payments/daily?date=yyyy-MM-dd` returns a PDF. `payments_get_report_history` reads original payment details and complete associated receipts in one database snapshot; its composite result stores no data. SQL performs no payment calculations. C# rebuilds copies from Unresolved with unknown amounts, resets receipt classifications in memory and reuses `PaymentEventProcessor` in receipt/identifier order, retaining terminal decisions made during that replay. Persisted payment state and receipt classifications never change during reporting.
+### Acme stub assumptions
 
-Requests, approvals, declines and accepted adjustments contribute to their own reporting days; an approval is counted once even if refunded or reversed that day. Approval totals use authoritative approved amounts, declines use requested amounts, and adjustments use their own accepted amounts. Remaining/pending approval values are cumulative end-of-day balances across payments already created. Effective dates use Acme transaction timestamps in Africa/Johannesburg, with receipt-time fallback when absent and explicit offsets respected. Invalid supplied timestamps fail the report with identifiers logged. Late receipts can revise historical results. Later replay only supplies a subsequent-financial-change flag; future types, amounts and dates are excluded.
+The assignment specifically mentioned that the stub was supporting infrastructure and not part of what was being assessed. I therefore used AI to build most of it from Appendix A, concentrating my own efforts on the payment integration and the decisions around payment processing.
 
-The accepted E29 audit gap remains: retry decisions are not fully stored, so replay leaves rate-limit receipts Pending until a bank outcome resolves them. Unknown remaining balances after approval are labelled Unknown, with the known portion and affected count shown. PDFsharp 6.2.4 (MIT) and embedded DejaVu fonts support native/container rendering without host font installation; font notices ship alongside the application. ZAR is shown in rand; other currencies remain explicitly in minor units. The small assignment dataset permits full-history reads; growth would require measured indexing, streamed reads or replay checkpoints rather than duplicated lifecycle rules in SQL.
+The stub supports holding, reordering and redelivering callbacks, along with full refunds and reversals. These are the scenarios needed to demonstrate duplicate and out-of-order handling.
 
-## Acme design and configuration
+The stub stores its transactions in memory, so restarting it loses the transaction history and any queued callbacks.
 
-The .NET 8 Minimal API runs natively or in a non-root container. In-memory storage keeps the supporting stub small: concurrent submissions replay the original outcome for 24 hours, RRNs remain reserved until restart, and queries reflect reversals/refunds. Valid payments are approved by default. Optional bearer-protected demo controls select approval or acquirer decline (`05`), delay initial replies and hold callbacks. These defaults apply to new payments in a dedicated, sequentially operated demo stub; accepted transactions retain one immutable scenario. A delayed reply models an accepted payment whose response arrives late or is lost, with its outcome immediately available through RTTQ. Submission-time RTTQ can therefore recover the outcome before the service returns; further reconciliation remains unfinished.
+## 2. Database Design and Reporting
 
-Each transaction retains the exact generated callback bytes and identity. Controls can queue held callbacks in a chosen order or replay them through the existing authenticated dispatcher without applying the underlying reversal/refund again. Existing full reversal/refund controls remain available; partial outcomes are deferred. Reading scenario configuration, callback lists or RTTQ does not release deliveries or reconcile payments. Restart loses all demo state.
+I chose PostgreSQL and explicit SQL scripts rather than Entity Framework.
 
-A bounded callback queue and one worker reuse HTTP connections. Attempts time out after ten seconds; failures receive three retries, one second apart, preserving bytes and event identity. Shutdown drains accepted work until the host deadline; restart loses transactions and queued callbacks.
+For a project of this size, I find the database design easier to understand when the schema is defined directly. Database access is through stored procedures, with business logic and payment calculations kept in C# so they can be tested independently.
 
-DotNetEnv loads an optional repository-root `.env` before native host creation without replacing existing variables. Compose maps only each service's settings, also preserving shell precedence; required values are checked when that service starts. AWS can supply runtime variables directly. Native/container examples account for listening addresses and callback routing.
+The main model contains customers, stored cards, sub-merchants, payments and payment events.
 
-The console demo is a separate HTTP client available natively or through the opt-in Compose `demo` service. With no arguments it offers a numbered menu; named scenarios remain available for scripts. Elapsed-time messages distinguish the original payment request (A), Acme controls/callbacks (B) and stored-state observations, with request/response JSON. These labels follow asynchronous operations rather than fixed threads. It uses existing seeded catalogue records with a fresh app payment ID per run and waits for callback acknowledgements from the stub's HTTP dispatcher. Stub diagnostics count received submissions and record interrupted delayed replies; they do not interpret payment state. The runner compares documented observable outcomes without doing payment calculations or accessing the database. Advice-before-response ordering and timeout recovery are demonstrated. Runs are sequential against a dedicated stub and restore its previous scenario configuration.
+Payments hold the current state, while payment events retain the history of interactions with Acme. Event payloads are stored as JSONB. This preserves the original information, including fields Acme may add in future, without requiring database changes for every API change.
 
-Six opt-in full reversal/refund demonstrations check `Reversed`/`Refunded`, retained approved amount, zero remaining value, replay safety, early callbacks, late approval Advice and reversal precedence over refunds. The stub can emit one full event of each type for the same payment, preserving its reversal snapshot. It cannot emit partial adjustments or multiple distinct refunds; those application rules and exact audit classifications are not verified by these demonstrations. The callback implementation from PR #29 is now included. Default Compose CI verifies the original six scenarios; `adjustment-compose` ensures the published callback commit is present and runs all twelve. Local `--include-adjustments` and the manual workflow input also enable the adjustment suite.
+I haven't investigated the performance implications of JSONB compared with a more fully relational event model. For a production system I'd evaluate this against actual reporting and investigation requirements.
 
-## Validation and AI workflow
+A few deliberate simplifications:
 
-The Release suite covers service tests with mocked DAL/Acme dependencies, HTTP contract/error tests and Acme HTTP/callback tests. Scenario coverage checks decline consistency, unchanged transaction replay after configuration updates, callback ordering and authenticated replay, invalid configuration, access controls and delayed/lost replies. An observed controlled clock advances response delays without real-time waits; independent ephemeral listeners allow stub tests to run concurrently. Transaction Status tests exercise actual C# calculations, delivery permutations, pending-event reconsideration, replay handling, the published signature example and acknowledgement after commit. These tests use no real database, schema fixtures or substitute database harnesses.
+- City, region and country are stored directly against sub-merchants. In production I'd consider lookup tables to enforce consistency in names, abbreviations and casing.
+- The database setup uses fixed development credentials rather than reading them from the environment files. These scripts are only intended for initial local setup, and the credentials are explicitly not production secrets.
+- The SQL scripts create a fresh database and schema. For an existing production database, I'd use versioned migrations executed as part of deployment, not by each running application instance.
 
-`Scripts/run-demos.sh` builds the runner and starts the supported Compose application with the existing deployment SQL and seed records. It obtains the scenario names from the console, runs them sequentially and propagates failures. CI runs that exact script against actual application, Acme and PostgreSQL containers. It exercises deployment, procedure calls and twelve observed HTTP flows, including full reversals/refunds, without embedding SQL in a runner or reproducing database objects. Multi-instance lock contention, database failure/rollback paths, partial adjustments, existing-volume upgrades, native removal and Windows/macOS execution remain separate verification work. Local script runs preserve containers and audit data; only the CI job removes its own stack and volumes.
+### Daily reporting
 
-Reporting tests use raw receipt inputs with the actual processors; an independent PDF reader checks content, pagination and page bounds. The cross-midnight example, delayed receipts, historical refunds superseded later, duplicate adjustments, currency grouping, unknown balances and safe HTTP failures are covered. The supported Compose stack also deployed the new reporting procedure, ran the existing approval/decline/refund/reversal demonstrations, and returned the expected daily PDF through the application login. This verified nested result mapping and embedded-font container rendering. The downloaded PDF was rendered for visual review, and all four live payment responses were unchanged after reporting.
+The daily settlement summary is available as a PDF through an API endpoint, grouped by sub-merchant and currency.
 
-Codex used the assignment, repository, related startup discussion and official documentation. The user selected shared SQL, hard-coded development credentials and procedure-only access, avoiding an extra launcher. Static checks and documentation review support this update; actual database verification must use these deployment scripts without copied schemas, database test harnesses or fabricated fixtures.
+The report includes the count and value of approved payments, declined payments, reversals and refunds. A payment can appear in more than one category, for example if it was approved and then refunded.
 
-## Remaining deliverables
+The report reconstructs historical payment state from stored events rather than maintaining a separate reporting table. This avoids duplicating payment rules, but historical reconstruction is more complicated than I initially expected.
 
-Broader end-to-end verification, further reconciliation, AWS deployment reasoning, production operability/secrets, the full AI workflow record and the 5–10 minute walkthrough remain unfinished. No AWS deployment is required. Further stub simulations, including partial authorisations/refunds, remain deferred.
+For larger volumes I'd revisit this design, considering persisted financial movements, reporting checkpoints or pre-calculated daily summaries. Correctness would need to come before performance optimisation.
+
+## 3. AWS Readiness and Operability
+
+The application is containerised but hasn't been deployed to AWS, as this isn't required by the assignment.
+
+My AWS experience has mostly been with standard virtual machines and using load balancers as an additional layer of security rather than for actually distributing load. I haven't worked directly with AWS's managed container services or a container orchestrator. I am aware of what orchestration is used for and have a general understanding of how it works, but don't have hands-on experience with it.
+
+For a production deployment, I'd investigate ECS/Fargate and EKS, particularly if the team is already using Kubernetes, along with Amazon RDS for PostgreSQL. Before choosing an approach, I'd want to understand the pros and cons of each, including performance, scaling and how the managed services handle the application lifecycle. In particular, I'd want to understand how shutdown notifications are handled and what happens to work in progress when AWS stops, replaces or moves containers.
+
+The main considerations would be:
+
+**Configuration and secrets:** Application settings would continue to come from environment variables, with sensitive values supplied through AWS Secrets Manager rather than stored in deployment files. Local `.env` files are only a development convenience.
+
+**Scaling:** The service should be able to run across multiple containers behind a load balancer. Database row locking already provides coordination for updates to the same payment. I'd configure automatic scaling based on load, within agreed limits, while taking the database capacity and Acme's rate limits into account.
+
+**Graceful shutdown:** When a container is being stopped, the orchestrator sends a termination signal (`SIGTERM`). The service should stop accepting new work and allow requests and database transactions that are still being processed to finish within the configured shutdown period. This is particularly important when dealing with payments that might already have reached Acme.
+
+**Monitoring:** I'd use CloudWatch for structured application logs, metrics and alarms. Important signals include Acme response times, timeout and error rates, unresolved payments, pending notifications, database failures and application health. Specific error conditions should trigger notifications through SNS or the team's existing alerting system rather than requiring somebody to monitor logs manually.
+
+I haven't implemented this type of monitoring on AWS, but I have used similar functionality on GCP, using application logging and monitoring to trigger email notifications when problems were detected.
+
+## 4. AI-Assisted Development
+
+I used ChatGPT and Codex throughout the assignment, but for different purposes.
+
+ChatGPT was primarily a planning tool and sounding board. I created a project with the assignment PDF as context and used it to discuss architecture, technology choices, assumptions and alternatives. Some of the technologies were unfamiliar to me, so being able to challenge an idea and ask follow-up questions was useful.
+
+Codex was used for more detailed implementation planning, code generation, testing and review.
+
+I don't have a fixed AI workflow that I use for every project. The tools change quickly, and I adapt how I use them to the work. If I were working with a team, I'd encourage everyone to share examples of where AI has worked well and where it hasn't. Depending on the size and experience of the team, I'd also consider introducing a more structured workflow and shared rules to make sure everyone maintains a good understanding of the code being produced.
+
+For this assignment I kept the repository-level AI guidance fairly simple. The repository contains `AGENTS.md` and two small compliance instructions for Acme and SQL. Given the relatively short assignment PDF, I didn't feel a more elaborate set of skills was justified. In a larger project I'd narrow the compliance checks so the agents only had to load the relevant documentation.
+
+I made the architectural and business-rule decisions myself, then used Codex to implement specific parts of the solution. The supporting Acme stub was a good candidate for substantial AI generation because the assignment explicitly treats it as supporting infrastructure.
+
+I used Codex to review major changes, but generally only performed one review pass per major PR. Ordinarily I'd expect multiple passes, especially for core or critical code.
+
+## 5. Validation and Limitations
+
+I did some validation throughout development, but not nearly as much as I would have liked.
+
+I reviewed parts of the AI-generated code and made sure the project structure and general approach were what I wanted. I paid particular attention to the database design. Although the database itself is fairly simple, changing a database structure once a system is in production can be extremely difficult, so I wanted to be comfortable with that design from the start.
+
+For automated testing, I generally allowed AI to decide which tests to write rather than specifying every test case myself. During code reviews, when issues were identified, I required regression tests to be added to cover those specific problems.
+
+The solution has automated tests covering payment processing, notifications, event handling and reporting. There are also end-to-end demonstrations running against the actual application, PostgreSQL database and Acme stub. These provide useful coverage, but I wouldn't consider them sufficient proof that the entire system is correct.
+
+My normal approach to validating software, particularly something like the reporting, would be to spend time working through a variety of scenarios, writing down the expected results beforehand and then running the system to see whether the results match. I think it's important to have a clear expectation of what the system should produce before testing it, rather than running it, looking at the results and then deciding whether they seem correct.
+
+Unfortunately, I ran out of time before I could do this to the extent I would have liked. I spent more time on implementation, reviewing individual changes and getting the overall system working than on independently interrogating the accuracy of the completed solution. In hindsight, this may have been a time management oversight on my part.
+
+There are also some known issues and areas that would need further attention:
+
+- **Reporting:** There are open issues ([#39](https://github.com/RusselRillema/ZapTech/issues/39), [#40](https://github.com/RusselRillema/ZapTech/issues/40) and [#41](https://github.com/RusselRillema/ZapTech/issues/41)) relating to historical reporting, particularly how payment events are interpreted when they happen or arrive on different days.
+- **Reconciliation:** The immediate RTTQ attempt is implemented, but ongoing reconciliation of unresolved payments and notifications is not.
+- **Concurrency and recovery:** I'd want to do more testing with multiple instances running, database failures and shutdowns while processing payments.
+- **Acme stub:** It covers the main scenarios required for the assignment but doesn't simulate every possible payment outcome.
+
+Overall, I did review code, make technical decisions and enforce the structure I wanted, but I didn't spend as much time questioning and independently verifying the behaviour of the system as I normally would. That was primarily due to time constraints.
+
+## 6. What I Would Do Differently
+
+### Reporting requirements
+
+I underestimated the complexity of the daily reporting requirement.
+
+My initial assumption was that if I stored the payment data and events correctly, producing the report would be relatively straightforward. In hindsight, that was a poor assumption.
+
+The complications aren't purely technical. There are business decisions to make around payments that are approved on one day and refunded or reversed on another, notifications that arrive late, and how those events should affect historical reports.
+
+This is the type of problem-solving I enjoy, but I didn't allow myself enough time to properly reason through the scenarios and their implications.
+
+I would spend more time understanding exactly what the report is supposed to represent and working through the edge cases before implementing it.
+
+### Development setup
+
+I underestimated the time involved in setting up the development environment. The first several hours were spent working through native versus Docker configuration, environment files and PostgreSQL setup before I was properly ready to tackle the payment integration itself.
+
+I wanted the project to be easy for someone else to run, which I still think was worth doing, but I could have managed the time better.
+
+### Planning and parallel development
+
+I'd define the main interfaces and class responsibilities earlier, before starting implementation.
+
+This would have made it easier to divide the implementation into independent pieces and work on several parts in parallel. I think I could have made better use of AI's ability to work on multiple tasks at once, rather than having to wait for one part of the implementation to be completed before starting another.
+
+### AI review process
+
+I'd also spend more time reviewing AI-generated changes. One review pass per major PR was not enough for some of the more complicated payment and reporting scenarios.
+
+In particular, I'd use more independent review and spend additional time testing assumptions and edge cases rather than relying primarily on the scenarios I'd already considered.
