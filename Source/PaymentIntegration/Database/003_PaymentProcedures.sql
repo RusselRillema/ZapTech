@@ -253,6 +253,56 @@ BEGIN
 END;
 $procedure$;
 
+CREATE PROCEDURE public.payments_get_for_update_by_rrn
+(
+    IN p_rrn text,
+    OUT p_result_payment_id uuid,
+    OUT p_result_app_payment_id text,
+    OUT p_result_customer_id text,
+    OUT p_result_customer_card_id uuid,
+    OUT p_result_sub_merchant_id text,
+    OUT p_result_order_number text,
+    OUT p_result_currency_code text,
+    OUT p_result_requested_amount bigint,
+    OUT p_result_approved_amount bigint,
+    OUT p_result_remaining_amount bigint,
+    OUT p_result_state text,
+    OUT p_result_created_at timestamptz,
+    OUT p_result_has_pending_events boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $procedure$
+DECLARE
+    v_payment_id uuid;
+BEGIN
+    -- Only resolve the immutable identifier here. The existing procedure acquires
+    -- the payment row lock before reading state, retaining it in this transaction.
+    SELECT p."PaymentId"
+    INTO v_payment_id
+    FROM public."Payments" AS p
+    WHERE left(p."OrderNumber", 12) = p_rrn;
+
+    CALL public.payments_get_for_update(
+        p_payment_id => v_payment_id,
+        p_result_payment_id => p_result_payment_id,
+        p_result_app_payment_id => p_result_app_payment_id,
+        p_result_customer_id => p_result_customer_id,
+        p_result_customer_card_id => p_result_customer_card_id,
+        p_result_sub_merchant_id => p_result_sub_merchant_id,
+        p_result_order_number => p_result_order_number,
+        p_result_currency_code => p_result_currency_code,
+        p_result_requested_amount => p_result_requested_amount,
+        p_result_approved_amount => p_result_approved_amount,
+        p_result_remaining_amount => p_result_remaining_amount,
+        p_result_state => p_result_state,
+        p_result_created_at => p_result_created_at,
+        p_result_has_pending_events => p_result_has_pending_events
+    );
+END;
+$procedure$;
+
 CREATE PROCEDURE public.payment_events_create
 (
     IN p_payment_event_id uuid,
@@ -334,6 +384,42 @@ BEGIN
     FROM public."PaymentEvents" AS e
     WHERE e."PaymentId" = p_payment_id
         AND e."ProcessingState" = 'Pending';
+END;
+$procedure$;
+
+CREATE PROCEDURE public.payment_events_get_transaction_status
+(
+    IN p_payment_id uuid,
+    OUT p_result_events public.payment_event_result[]
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $procedure$
+BEGIN
+    -- The caller retains the payment row lock. Return audit data for C# to
+    -- interpret, including applied adjustments needed to recognize redeliveries.
+    SELECT coalesce(
+        array_agg(
+            ROW(
+                e."PaymentEventId",
+                e."PaymentId",
+                e."Source",
+                e."Payload",
+                e."HttpStatusCode",
+                e."ReceivedAt",
+                e."ProcessingState",
+                e."ProcessingComment",
+                e."ProcessedAt"
+            )::public.payment_event_result
+            ORDER BY e."ReceivedAt", e."PaymentEventId"
+        ),
+        ARRAY[]::public.payment_event_result[]
+    )
+    INTO p_result_events
+    FROM public."PaymentEvents" AS e
+    WHERE e."PaymentId" = p_payment_id
+        AND e."Source" = 'TransactionStatus';
 END;
 $procedure$;
 

@@ -13,8 +13,7 @@ public sealed class PaymentResponseProcessor
 
         if (receipt.Source is not ("PaymentResponse" or "TransactionQuery"))
         {
-            //TODO: Implement reversal/refund processing in its respective step.
-            throw new NotImplementedException($"Event source {receipt.Source} is not implemented yet.");
+            throw new InvalidOperationException($"Event source {receipt.Source} is not a payment outcome.");
         }
 
         var hasOutcome = payment.State != "Unresolved";
@@ -108,7 +107,7 @@ public sealed class PaymentResponseProcessor
             if (!response.TryGetProperty("AuthAmount", out var authorised)
                 || authorised.ValueKind != JsonValueKind.Number || !authorised.TryGetInt64(out var value) || value < 0)
             {
-                if (payment.State == "Approved" && payment.ApprovedAmount is not null)
+                if (payment.HasApproval && payment.ApprovedAmount is not null)
                 {
                     return Ignore(payment, receipt, processedAt,
                         "Approval has no valid AuthAmount; the authorised amount is already established.");
@@ -124,7 +123,8 @@ public sealed class PaymentResponseProcessor
         var nextState = approved ? "Approved" : "Declined";
         if (hasOutcome)
         {
-            if (payment.State == nextState && (!approved || payment.ApprovedAmount == amount))
+            if (approved && payment.HasApproval && payment.ApprovedAmount == amount
+                || !approved && payment.State == nextState)
             {
                 return Ignore(payment, receipt, processedAt,
                     "This bank outcome has already been applied.");
@@ -194,7 +194,7 @@ public sealed class PaymentResponseProcessor
         }
         if (hasOutcome)
         {
-            return payment.State == nextState
+            return (approved && payment.HasApproval || payment.State == nextState)
                 ? Ignore(payment, receipt, processedAt, "This bank outcome has already been applied.")
                 : LeavePending(payment, receipt, "Conflicting bank outcomes require reconciliation.");
         }

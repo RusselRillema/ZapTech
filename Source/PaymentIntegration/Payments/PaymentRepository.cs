@@ -130,10 +130,18 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
         }
     }
 
-    public async Task<IPaymentProcessingSession> BeginProcessingAsync(
+    public Task<IPaymentProcessingSession> BeginProcessingAsync(
         Guid? paymentId,
         Guid eventId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        BeginProcessingAsync(paymentId, null, eventId, cancellationToken);
+
+    public Task<IPaymentProcessingSession> BeginProcessingByRrnAsync(
+        string rrn, Guid eventId, CancellationToken cancellationToken) =>
+        BeginProcessingAsync(null, rrn, eventId, cancellationToken);
+
+    private async Task<IPaymentProcessingSession> BeginProcessingAsync(
+        Guid? paymentId, string? rrn, Guid eventId, CancellationToken cancellationToken)
     {
         NpgsqlConnection? connection = null;
         NpgsqlTransaction? transaction = null;
@@ -143,22 +151,22 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
             connection = await dataSource.OpenConnectionAsync(cancellationToken);
             transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-            var payment = await GetLockedPaymentAsync(
-                connection,
-                transaction,
-                paymentId,
-                cancellationToken);
+            var payment = rrn is null
+                ? await GetLockedPaymentAsync(connection, transaction, paymentId, cancellationToken)
+                : await CallAsync(connection, transaction, "payments_get_for_update_by_rrn",
+                    [new("p_rrn", NpgsqlDbType.Text, rrn)], paymentOutputNames, ReadPayment, cancellationToken);
 
-            return new Session(connection, transaction, payment, paymentId, eventId, this, logger);
+            return new Session(connection, transaction, payment, payment?.PaymentId ?? paymentId, eventId, this, logger);
         }
         catch (Exception exception)
         {
             logger.LogError(
                 exception,
-                "Database operation {Operation} failed for payment {PaymentId}, event {PaymentEventId}",
-                "payments_get_for_update",
+                "Database operation {Operation} failed for payment {PaymentId}, event {PaymentEventId}, RRN {RetrievalReferenceNumber}",
+                rrn is null ? "payments_get_for_update" : "payments_get_for_update_by_rrn",
                 paymentId,
-                eventId);
+                eventId,
+                rrn);
 
             try
             {
@@ -399,6 +407,22 @@ public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<Payme
             catch (Exception exception)
             {
                 LogFailure(exception, "payment_events_get_pending");
+                throw;
+            }
+        }
+
+        public async Task<IReadOnlyList<PaymentEvent>> GetTransactionStatusEventsAsync(
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await repository.CallAsync(connection, transaction, "payment_events_get_transaction_status",
+                    [new("p_payment_id", NpgsqlDbType.Uuid, Payment?.PaymentId)], ["p_result_events"],
+                    repository.ReadPendingEvents, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                LogFailure(exception, "payment_events_get_transaction_status");
                 throw;
             }
         }

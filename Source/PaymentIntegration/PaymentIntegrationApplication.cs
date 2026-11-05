@@ -16,6 +16,7 @@ public static class PaymentIntegrationApplication
         // Resolve each operation's external configuration lazily; health remains independent.
         builder.Services.AddSingleton(provider => AcmeSettings.Read(provider.GetRequiredService<IConfiguration>()));
         builder.Services.AddSingleton(provider => AcmeAdviceSettings.Read(provider.GetRequiredService<IConfiguration>()));
+        builder.Services.AddSingleton(provider => AcmeWebhookSettings.Read(provider.GetRequiredService<IConfiguration>()));
         builder.Services.AddSingleton(provider =>
         {
             var configuration = provider.GetRequiredService<IConfiguration>();
@@ -44,8 +45,10 @@ public static class PaymentIntegrationApplication
         builder.Services.AddSingleton<CardAcceptorNameFormatterFactory>();
         builder.Services.AddSingleton<AcmeRequestFactory>();
         builder.Services.AddScoped<PaymentResponseProcessor>();
+        builder.Services.AddScoped<TransactionStatusProcessor>();
         builder.Services.AddScoped<PaymentEventService>();
         builder.Services.AddScoped<PaymentAdviceService>();
+        builder.Services.AddScoped<TransactionStatusService>();
         builder.Services.AddScoped<PaymentService>();
         builder.Services.AddScoped<PaymentStatusService>();
         configure?.Invoke(builder);
@@ -72,6 +75,7 @@ public static class PaymentIntegrationApplication
             }
         });
         app.MapPost("/notifications/payment-advice", ReceiveAdviceAsync);
+        app.MapPost("/notifications/transaction-status", (Delegate)ReceiveStatusAsync);
         app.MapPost("/payments", async (NewPaymentRequest request, PaymentService service, CancellationToken cancellationToken) =>
         {
             try
@@ -85,6 +89,58 @@ public static class PaymentIntegrationApplication
             }
         });
         return app;
+    }
+
+    private static async Task<IResult> ReceiveStatusAsync(HttpContext context)
+    {
+        string? rrn = null;
+        string? acmeEventId = null;
+        try
+        {
+            var settings = context.RequestServices.GetRequiredService<AcmeWebhookSettings>();
+            var signatures = context.Request.Headers["x-signature"];
+            if (signatures.Count != 1 || string.IsNullOrWhiteSpace(signatures[0]))
+                return Results.Unauthorized();
+
+            // Verify the exact delivered bytes, before parsing JSON or resolving the DAL.
+            using var bytes = new MemoryStream();
+            await context.Request.Body.CopyToAsync(bytes, context.RequestAborted);
+            if (!settings.Authenticates(bytes.GetBuffer().AsSpan(0, checked((int)bytes.Length)), signatures[0]!))
+                return Results.Unauthorized();
+            if (!context.Request.HasJsonContentType())
+                return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+
+            using var body = JsonDocument.Parse(bytes.GetBuffer().AsMemory(0, checked((int)bytes.Length)));
+            if (body.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (body.RootElement.TryGetProperty("rrn", out var reference) && reference.ValueKind == JsonValueKind.String)
+                    rrn = reference.GetString();
+                if (body.RootElement.TryGetProperty("transactionUUID", out var identifier) && identifier.ValueKind == JsonValueKind.String)
+                    acmeEventId = identifier.GetString();
+            }
+            await context.RequestServices.GetRequiredService<TransactionStatusService>().ReceiveAsync(body.RootElement);
+            return Results.Ok();
+        }
+        catch (PaymentRequestException exception)
+        {
+            return Results.Problem(statusCode: exception.StatusCode, title: exception.Code, detail: exception.Message);
+        }
+        catch (JsonException)
+        {
+            return Results.Problem(statusCode: 400, title: "Invalid Transaction Status JSON");
+        }
+        catch (BadHttpRequestException exception)
+        {
+            return Results.Problem(statusCode: exception.StatusCode, title: "Invalid Transaction Status request");
+        }
+        catch (Exception exception)
+        {
+            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TransactionStatusEndpoint")
+                .LogError(exception, "Operation {Operation} failed for RRN {RetrievalReferenceNumber}, Acme event {AcmeEventId}",
+                    "receive Transaction Status", rrn, acmeEventId);
+            return Results.Problem(statusCode: 503, title: "Transaction Status could not be recorded",
+                detail: "The notification was not acknowledged. Retry the delivery.");
+        }
     }
 
     private static async Task<IResult> ReceiveAdviceAsync(HttpContext context, AcmeAdviceSettings settings)
