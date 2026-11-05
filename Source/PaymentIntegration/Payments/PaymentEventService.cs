@@ -1,10 +1,20 @@
 namespace PaymentIntegration.Payments;
 
 public sealed class PaymentEventService(IPaymentRepository repository,
-    PaymentResponseProcessor processor, TimeProvider clock, ILogger<PaymentEventService> logger)
+    PaymentResponseProcessor processor, TransactionStatusProcessor statusProcessor,
+    TimeProvider clock, ILogger<PaymentEventService> logger)
 {
-    public async Task<Payment?> ProcessAsync(Guid? paymentId, Guid eventId,
-        PaymentEvent? receipt, bool retryingRateLimit = false)
+    public Task<Payment?> ProcessAsync(Guid? paymentId, Guid eventId,
+        PaymentEvent? receipt, bool retryingRateLimit = false) =>
+        ProcessAsync(paymentId, eventId, receipt, retryingRateLimit,
+            token => repository.BeginProcessingAsync(paymentId, eventId, token));
+
+    public Task<Payment?> ProcessStatusAsync(string rrn, Guid eventId, PaymentEvent receipt) =>
+        ProcessAsync(null, eventId, receipt, false,
+            token => repository.BeginProcessingByRrnAsync(rrn, eventId, token));
+
+    private async Task<Payment?> ProcessAsync(Guid? paymentId, Guid eventId, PaymentEvent? receipt,
+        bool retryingRateLimit, Func<CancellationToken, Task<IPaymentProcessingSession>> beginSession)
     {
         // Finish auditing a received event even if its HTTP caller disconnects.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
@@ -13,9 +23,10 @@ public sealed class PaymentEventService(IPaymentRepository repository,
 
         try
         {
-            await using var session = await repository.BeginProcessingAsync(paymentId, eventId, token);
+            await using var session = await beginSession(token);
             var payment = session.Payment;
-            if (payment is null && receipt?.Source != "PaymentAdvice")
+            paymentId = payment?.PaymentId ?? paymentId;
+            if (payment is null && receipt?.Source is not ("PaymentAdvice" or "TransactionStatus"))
             {
                 throw new InvalidOperationException("The payment to process does not exist.");
             }
@@ -29,20 +40,29 @@ public sealed class PaymentEventService(IPaymentRepository repository,
 
             if (payment is null)
             {
-                operation = "save unlinked payment advice";
-                await session.SaveEventAsync(processor.ProcessUnlinkedAdvice(receipt!, clock.GetUtcNow()), token);
+                operation = "save unlinked payment event";
+                var unlinked = receipt!.Source == "PaymentAdvice"
+                    ? processor.ProcessUnlinkedAdvice(receipt, clock.GetUtcNow())
+                    : receipt with { ProcessingComment = "UnknownPayment" };
+                await session.SaveEventAsync(unlinked, token);
             }
             else
             {
                 operation = "read pending payment events";
                 var pending = (await session.GetPendingEventsAsync(token)).ToArray();
+                IReadOnlyList<PaymentEvent> statusHistory = [];
+                if (pending.Any(item => item.Source == "TransactionStatus"))
+                {
+                    operation = "read transaction status history";
+                    statusHistory = await session.GetTransactionStatusEventsAsync(token);
+                }
                 bool applied;
                 do
                 {
                     applied = false;
                     for (var index = 0; index < pending.Length; index++)
                     {
-                        if (pending[index].ProcessingState != "Pending")
+                        if (pending[index].ProcessingState != "Pending" || pending[index].Source == "TransactionStatus")
                             continue;
 
                         operation = "process payment event";
@@ -53,12 +73,25 @@ public sealed class PaymentEventService(IPaymentRepository repository,
                         pending[index] = result.Event;
                         applied |= result.Event.ProcessingState == "Applied";
                     }
+
+                    if (statusHistory.Count > 0)
+                    {
+                        operation = "process transaction status history";
+                        var previous = statusHistory.ToDictionary(item => item.PaymentEventId);
+                        var result = statusProcessor.Process(payment, statusHistory, clock.GetUtcNow());
+                        payment = result.Payment;
+                        statusHistory = result.Events;
+                        applied |= statusHistory.Any(item => item.ProcessingState == "Applied"
+                            && previous[item.PaymentEventId].ProcessingState != "Applied");
+                    }
                 } while (applied);
 
-                payment = payment with { HasPendingEvents = pending.Any(item => item.ProcessingState == "Pending") };
+                var updatedEvents = pending.Where(item => item.Source != "TransactionStatus").Concat(statusHistory).ToArray();
+                payment = payment with { HasPendingEvents = updatedEvents.Any(item => item.ProcessingState == "Pending") };
                 operation = "save payment";
                 await session.SavePaymentAsync(payment, token);
-                foreach (var item in pending)
+                // Release any previous applied identity before saving its replacement.
+                foreach (var item in updatedEvents.OrderBy(item => item.ProcessingState == "Applied"))
                 {
                     operation = "save payment event";
                     await session.SaveEventAsync(item, token);
