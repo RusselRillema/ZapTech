@@ -32,7 +32,19 @@ docker compose up --build --wait
 docker compose ps
 ```
 
-Stop with `docker compose down`; database data is retained. **Adding `--volumes` deletes the database data.** Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
+Port 5432 must be free, or change `POSTGRES_PORT` in `.env`. HTTP ports default to 5080/5081; change `PAYMENT_HTTP_PORT` / `ACME_HTTP_PORT` if needed.
+
+Stop and remove containers/network, keeping database data:
+
+```text
+docker compose down
+```
+
+Or **also delete the database data**:
+
+```text
+docker compose down --volumes
+```
 
 ## Run natively
 
@@ -77,7 +89,15 @@ Start the payment API in a second terminal, also from the repository root:
 dotnet run --project Source/PaymentIntegration -- --urls http://127.0.0.1:5080
 ```
 
-Stop each with Ctrl+C. The database persists; restarting Acme clears its in-memory transactions and callbacks.
+Stop each application with **Ctrl+C** in its terminal; the database persists. Restarting Acme clears its in-memory transactions and callbacks.
+
+To **delete the application database and login**, stop the apps, disconnect other clients from `payment_integration`, and run as the same PostgreSQL administrator used for setup:
+
+```text
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/remove.sql
+```
+
+The PostgreSQL server and other databases remain.
 
 ## Check it is running
 
