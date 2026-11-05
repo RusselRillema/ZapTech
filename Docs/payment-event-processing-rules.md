@@ -27,6 +27,10 @@
 
 - If submission leaves the outcome unknown, query Acme once using the same transaction ID. Allow up to 10 seconds within the existing 60-second submission window.
 - Process the query as a payment event. Inconclusive results remain unresolved for later recovery.
+- An RTTQ `Refunded` snapshot without a valid `AuthAmount`, or without complete matching refund history, leaves an unknown payment **Unresolved**. Do not infer the original authorised amount from webhook amounts or infer a remaining balance from an incomplete history.
+- Resolve a `Refunded` snapshot automatically only when its authoritative `AuthAmount` and distinct matching successful refund webhooks account for the full approved value. Replayed webhook identities count once. Set **Refunded** with the approved amount retained and a remaining amount of zero.
+- A `Reversed` snapshot likewise requires authoritative `AuthAmount` and a matching successful full reversal.
+- Conflicting snapshot and recorded event evidence remains **Unresolved** for an unknown payment. Keep an explanatory **Pending** event comment requiring investigation and log a warning with the payment and event identifiers. Preserve previously established bank outcomes when a conflicting query cannot be applied.
 
 ## Payment Events and Amounts
 

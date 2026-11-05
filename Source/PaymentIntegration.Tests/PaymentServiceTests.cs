@@ -604,6 +604,46 @@ public sealed class PaymentServiceTests
     }
 
     [Theory]
+    [InlineData("Refund", "Refunded")]
+    [InlineData("Reversal", "Reversed")]
+    public async Task A_single_RTTQ_recovers_a_timed_out_submission_using_the_recorded_adjustment(
+        string type, string state)
+    {
+        var flow = new Flow { Reply = _ => new(null, null, "Timed out.") };
+        flow.Repository.Setup(repository => repository.BeginProcessingByRrnAsync(
+                It.Is<string>(rrn => flow.Created != null && rrn == flow.Created.OrderNumber.Substring(0, 12)),
+                It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Callback(() => flow.Calls.Add("lock")).ReturnsAsync(flow.Session.Object);
+        flow.QueryReply = async (_, _) =>
+        {
+            var callbacks = new TransactionStatusService(flow.EventService, TimeProvider.System,
+                NullLogger<TransactionStatusService>.Instance);
+            await callbacks.ReceiveAsync(JsonSerializer.SerializeToElement(new
+            {
+                transactionUUID = "adjustment-after-lost-response", transactionType = type,
+                transactionDateTime = "2026-03-04T08:02:11.417", rrn = flow.Created!.OrderNumber[..12],
+                transactionAmount = 1250, currencyCode = "ZAR", txResultCode = "00", isApproved = true
+            }));
+            return QueryOutcome(flow, status: state);
+        };
+
+        var result = await flow.Service.SubmitAsync(flow.Request, CancellationToken.None);
+
+        Assert.Equal(state, result.State);
+        Assert.Equal(2000, result.RequestedAmount);
+        Assert.Equal(1250, result.ApprovedAmount);
+        Assert.Equal(0, result.RemainingAmount);
+        Assert.True(result.IsFullyReconciled);
+        Assert.Equal(3, flow.Events.Count);
+        Assert.Equal("Ignored", Assert.Single(flow.Events, item => item.Source == "PaymentResponse").ProcessingState);
+        Assert.Equal("Applied", Assert.Single(flow.Events, item => item.Source == "TransactionQuery").ProcessingState);
+        Assert.Equal("Applied", Assert.Single(flow.Events, item => item.Source == "TransactionStatus").ProcessingState);
+        flow.Client.Verify(client => client.SubmitAsync(It.IsAny<AcmeEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
+        flow.Client.Verify(client => client.QueryAsync(result.PaymentId, It.IsAny<CancellationToken>()), Times.Once);
+        flow.Session.Verify(session => session.CommitAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Theory]
     [InlineData(400)]
     [InlineData(401)]
     [InlineData(404)]
@@ -908,6 +948,7 @@ public sealed class PaymentServiceTests
         public Func<Guid, CancellationToken, Task<AcmeReply>> QueryReply { get; set; } =
             (_, _) => Task.FromResult(new AcmeReply(null, null, "Query outcome unknown."));
         public PaymentService Service { get; }
+        public PaymentEventService EventService { get; }
 
         public Flow(TimeProvider? timeProvider = null)
         {
@@ -954,6 +995,8 @@ public sealed class PaymentServiceTests
                     Calls.Add("read_pending");
                     return Events.Where(receipt => receipt.ProcessingState == "Pending").ToArray();
                 });
+            Session.Setup(session => session.GetTransactionStatusEventsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => Events.Where(receipt => receipt.Source == "TransactionStatus").ToArray());
             Session.Setup(session => session.SavePaymentAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()))
                 .Callback((Payment payment, CancellationToken _) =>
                 {
@@ -973,11 +1016,13 @@ public sealed class PaymentServiceTests
             Session.Setup(session => session.CommitAsync(It.IsAny<CancellationToken>()))
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(session => session.DisposeAsync()).Callback(() => Calls.Add("dispose")).Returns(ValueTask.CompletedTask);
+            var statusProcessor = new TransactionStatusProcessor();
+            EventService = new(Repository.Object, new PaymentResponseProcessor(statusProcessor), statusProcessor, clock,
+                NullLogger<PaymentEventService>.Instance);
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
                     clock, new CardAcceptorNameFormatterFactory(new FnbCardAcceptorNameFormatter())),
-                new PaymentEventService(Repository.Object, new PaymentResponseProcessor(), new TransactionStatusProcessor(), clock,
-                    NullLogger<PaymentEventService>.Instance),
+                EventService,
                 clock, NullLogger<PaymentService>.Instance);
         }
 
