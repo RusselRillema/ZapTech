@@ -10,4 +10,4 @@ WORKDIR /app
 COPY --from=build /app .
 USER app
 ENTRYPOINT ["dotnet", "PaymentIntegration.Demo.dll"]
-CMD ["--help"]
+CMD ["--interactive"]

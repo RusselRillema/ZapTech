@@ -116,19 +116,22 @@ Database setup only supports a fresh database/login and Docker only initializes 
 
 ## Demos and tests
 
-With the stack running and `ACME_ENABLE_CONTROLS=true` (the template default), run an approval demo with **Docker**:
+With the stack running and `ACME_ENABLE_CONTROLS=true` (the template default), open the interactive demo with **Docker**:
 
 ```text
 docker compose build demo
-docker compose run --rm --no-deps -T demo --list
-docker compose run --rm --no-deps -T demo approval
+docker compose run --rm --no-deps demo
 ```
 
 Or **natively**:
 
 ```text
-dotnet run --project Source/PaymentIntegration.Demo -- approval
+dotnet run --project Source/PaymentIntegration.Demo
 ```
+
+Choose a numbered scenario and press Enter; each run returns to the menu. Output shows elapsed time, the payment request (A), Acme controls/callbacks (B), stored-state checks and request/response JSON. A/B identify asynchronous flows rather than fixed threads. Choose `0` to exit or **Ctrl+C** to cancel. Option `5` demonstrates Advice arriving while the original request waits; option `6` demonstrates timeout recovery.
+
+Single-scenario commands remain available: append `approval` to the Docker command or `-- approval` to the native command (substitute another scenario name as needed). Use `--list`, `--list-adjustments` or `--help` for command-line options; Docker scripts can retain `-T` when running these commands.
 
 Run scenarios sequentially against a dedicated local stack; they retain payments for audit. The optional script `bash Scripts/run-demos.sh --include-adjustments` requires Bash and Docker, starts the stack and runs all twelve scenarios, including refunds/reversals. Use `bash Scripts/run-demos.sh --help` for options.
 
