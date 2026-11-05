@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PaymentIntegration.Payments;
@@ -213,23 +214,372 @@ public sealed class TransactionStatusServiceTests
     }
 
     [Theory]
-    [InlineData(500L, 400L)]
-    [InlineData(400L, 500L)]
-    public async Task Changed_details_under_one_switch_identity_require_reconciliation(long first, long second)
+    [InlineData(500L, 400L, "PartiallyRefunded", 750L)]
+    [InlineData(400L, 500L, "PartiallyRefunded", 850L)]
+    [InlineData(1250L, 500L, "Refunded", 0L)]
+    public async Task Conflicting_UUID_receipts_preserve_an_already_applied_refund(
+        long first, long second, string state, long remaining)
     {
         var flow = new Flow();
-
         await flow.Receive("Refund", first);
+        var applied = Assert.Single(flow.Receipts);
+
         await flow.Receive("Refund", second);
 
-        Assert.Null(flow.Payment!.RemainingAmount);
+        Assert.Equal(state, flow.Payment!.State);
+        Assert.Equal(1250, flow.Payment.ApprovedAmount);
+        Assert.Equal(remaining, flow.Payment.RemainingAmount);
         Assert.True(flow.Payment.HasPendingEvents);
-        Assert.All(flow.Receipts, item =>
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(applied, flow.Receipts[0]);
+        AssertPendingConflict(flow.Receipts[1]);
+        Assert.Equal(second, flow.Receipts[1].Payload!.Value.GetProperty("transactionAmount").GetInt64());
+        Assert.NotEqual(applied.PaymentEventId, flow.Receipts[1].PaymentEventId);
+        flow.Session.Verify(value => value.CommitAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("transactionAmount")]
+    [InlineData("transactionType")]
+    [InlineData("transactionDateTime")]
+    [InlineData("txResultCode")]
+    [InlineData("isApproved")]
+    public async Task Conflicting_UUID_details_preserve_a_full_reversal_and_ignored_audit_records(string changed)
+    {
+        var flow = new Flow();
+        await flow.Receive("Reversal", 1250, "reversal");
+        await flow.Receive("Refund", 500, "ignored-refund");
+        var originalReceipts = flow.Receipts.ToArray();
+        var fields = Fields("Reversal", 1250, "reversal");
+        fields[changed] = changed switch
         {
-            Assert.Equal("Pending", item.ProcessingState);
-            Assert.Contains("conflicting details", item.ProcessingComment);
-            Assert.Null(item.ProcessedAt);
-        });
+            "transactionAmount" => 500L,
+            "transactionType" => "Refund",
+            "transactionDateTime" => "2026-03-05T08:02:11.417",
+            "txResultCode" => "05",
+            _ => false
+        };
+        fields["FutureSwitchField"] = "retain for investigation";
+        var payload = JsonSerializer.SerializeToElement(fields);
+
+        await flow.Service.ReceiveAsync(payload);
+
+        Assert.Equal("Reversed", flow.Payment!.State);
+        Assert.Equal(1250, flow.Payment.ApprovedAmount);
+        Assert.Equal(0, flow.Payment.RemainingAmount);
+        Assert.True(flow.Payment.HasPendingEvents);
+        Assert.Equal(originalReceipts, flow.Receipts.Take(2));
+        var conflict = flow.Receipts[2];
+        AssertPendingConflict(conflict);
+        Assert.Equal(PaymentId, conflict.PaymentId);
+        Assert.Equal(payload.GetRawText(), conflict.Payload!.Value.GetRawText());
+        Assert.Equal(3, flow.Receipts.Select(item => item.PaymentEventId).Distinct().Count());
+        flow.Session.Verify(value => value.CommitAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task A_conflict_with_an_ignored_UUID_preserves_the_previous_terminal_receipts()
+    {
+        var flow = new Flow();
+        await flow.Receive("Reversal", 1250, "reversal");
+        await flow.Receive("Refund", 500, "ignored-refund");
+        var originalReceipts = flow.Receipts.ToArray();
+
+        await flow.Receive("Refund", 400, "ignored-refund");
+
+        Assert.Equal("Reversed", flow.Payment!.State);
+        Assert.Equal(0, flow.Payment.RemainingAmount);
+        Assert.Equal(originalReceipts, flow.Receipts.Take(2));
+        AssertPendingConflict(flow.Receipts[2]);
+    }
+
+    [Fact]
+    public async Task A_UUID_conflict_logs_a_warning_with_the_payment_and_conflicting_receipt_identifiers()
+    {
+        var flow = new Flow();
+        await flow.Receive("Reversal", 1250);
+
+        await flow.Receive("Reversal", 500);
+
+        AssertConflictWarning(flow, flow.Receipts[1]);
+    }
+
+    [Theory]
+    [InlineData("Refund", 500L, "PartiallyRefunded", 750L)]
+    [InlineData("Refund", 1250L, "Refunded", 0L)]
+    [InlineData("Reversal", 1250L, "Reversed", 0L)]
+    public async Task An_exact_replay_preserves_the_applied_receipt_and_does_not_apply_twice(
+        string type, long amount, string state, long remaining)
+    {
+        var flow = new Flow();
+        await flow.Receive(type, amount);
+        var applied = Assert.Single(flow.Receipts);
+
+        await flow.Receive(type, amount);
+
+        Assert.Equal(state, flow.Payment!.State);
+        Assert.Equal(remaining, flow.Payment.RemainingAmount);
+        Assert.False(flow.Payment.HasPendingEvents);
+        Assert.Equal(applied, flow.Receipts[0]);
+        Assert.Equal("Ignored", flow.Receipts[1].ProcessingState);
+        Assert.Single(flow.Receipts, item => item.ProcessingState == "Applied");
+    }
+
+    [Theory]
+    [InlineData("Refund", 500L, "PartiallyRefunded", 750L)]
+    [InlineData("Reversal", 1250L, "Reversed", 0L)]
+    public async Task A_replay_after_a_UUID_conflict_cannot_apply_another_adjustment(
+        string type, long amount, string state, long remaining)
+    {
+        var flow = new Flow();
+        await flow.Receive(type, amount);
+        var applied = Assert.Single(flow.Receipts);
+        await flow.Receive(type, 400);
+
+        await flow.Receive(type, amount);
+
+        Assert.Equal(state, flow.Payment!.State);
+        Assert.Equal(remaining, flow.Payment.RemainingAmount);
+        Assert.Equal(3, flow.Receipts.Count);
+        Assert.Equal(applied, flow.Receipts[0]);
+        AssertPendingConflict(flow.Receipts[1]);
+        Assert.Single(flow.Receipts, item => item.ProcessingState == "Applied");
+    }
+
+    [Fact]
+    public async Task Authoritative_approval_does_not_apply_any_previously_conflicting_pending_UUID()
+    {
+        var flow = await TimedOutPayment();
+        await flow.Receive("Refund", 500);
+        await flow.Receive("Refund", 400);
+
+        await flow.BankApproval("PaymentResponse");
+
+        Assert.Equal("Approved", flow.Payment!.State);
+        Assert.Equal(1250, flow.Payment.ApprovedAmount);
+        Assert.Equal(1250, flow.Payment.RemainingAmount);
+        Assert.True(flow.Payment.HasPendingEvents);
+        Assert.All(flow.Receipts.Where(item => item.Source == "TransactionStatus"), AssertPendingConflict);
+    }
+
+    [Theory]
+    [InlineData("Refunded", "FQ")]
+    [InlineData("Refunded", "QF")]
+    [InlineData("Refunded", "ABQ")]
+    [InlineData("Refunded", "AQB")]
+    [InlineData("Refunded", "QAB")]
+    [InlineData("Refunded", "BAQ")]
+    [InlineData("Refunded", "BQA")]
+    [InlineData("Refunded", "QBA")]
+    [InlineData("Reversed", "RQ")]
+    [InlineData("Reversed", "QR")]
+    public async Task Adjusted_RTTQ_and_matching_webhooks_resolve_a_lost_response_in_either_delivery_order(
+        string state, string order)
+    {
+        var flow = await TimedOutPayment();
+        foreach (var item in order)
+        {
+            if (item == 'Q')
+                await flow.Query(QueryFields(state));
+            else
+                await flow.Receive(item == 'R' ? "Reversal" : "Refund",
+                    item == 'A' ? 500 : item == 'B' ? 750 : 1250, $"adjustment-{item}");
+        }
+
+        Assert.Equal(state, flow.Payment!.State);
+        Assert.Equal(2000, flow.Payment.RequestedAmount);
+        Assert.Equal(1250, flow.Payment.ApprovedAmount);
+        Assert.Equal(0, flow.Payment.RemainingAmount);
+        Assert.True(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(order.Length + 1, flow.Receipts.Count);
+        Assert.DoesNotContain(flow.Receipts, item => item.ProcessingState == "Pending");
+        Assert.All(flow.Receipts.Where(item => item.Source == "TransactionStatus"),
+            item => Assert.Equal("Applied", item.ProcessingState));
+        var query = Assert.Single(flow.Receipts, item => item.Source == "TransactionQuery");
+        Assert.Equal(state, query.Payload!.Value.GetProperty("PaymentResponse").GetProperty("TransactionStatus").GetString());
+        flow.Session.Verify(value => value.CommitAsync(It.IsAny<CancellationToken>()), Times.Exactly(order.Length + 1));
+    }
+
+    [Theory]
+    [InlineData("Refunded", "missing")]
+    [InlineData("Refunded", "null")]
+    [InlineData("Refunded", "negative")]
+    [InlineData("Refunded", "string")]
+    [InlineData("Refunded", "fractional")]
+    [InlineData("Refunded", "overflow")]
+    [InlineData("Reversed", "missing")]
+    [InlineData("Reversed", "null")]
+    [InlineData("Reversed", "negative")]
+    [InlineData("Reversed", "string")]
+    [InlineData("Reversed", "fractional")]
+    [InlineData("Reversed", "overflow")]
+    public async Task Matching_webhooks_cannot_replace_a_missing_or_invalid_RTTQ_AuthAmount(string state, string invalid)
+    {
+        var flow = await TimedOutPayment();
+        await flow.Receive(state == "Reversed" ? "Reversal" : "Refund", 1250);
+        var fields = QueryFields(state);
+        if (invalid == "missing")
+            fields.Remove("AuthAmount");
+        else
+            fields["AuthAmount"] = invalid switch
+            {
+                "negative" => -1L,
+                "string" => "1250",
+                "fractional" => 1250.5m,
+                "overflow" => 9223372036854775808m,
+                _ => null
+            };
+
+        await flow.Query(fields);
+
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.ApprovedAmount);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(3, flow.Receipts.Count);
+        Assert.All(flow.Receipts, item => Assert.Equal("Pending", item.ProcessingState));
+    }
+
+    [Theory]
+    [InlineData("Refunded", "Q")]
+    [InlineData("Refunded", "AQ")]
+    [InlineData("Refunded", "QA")]
+    [InlineData("Reversed", "Q")]
+    public async Task An_adjusted_RTTQ_with_incomplete_history_does_not_infer_a_remaining_balance(string state, string order)
+    {
+        var flow = await TimedOutPayment();
+        foreach (var item in order)
+        {
+            if (item == 'Q')
+                await flow.Query(QueryFields(state));
+            else
+                await flow.Receive("Refund", 500);
+        }
+
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.All(flow.Receipts, item => Assert.Equal("Pending", item.ProcessingState));
+        Assert.False(string.IsNullOrWhiteSpace(flow.Receipts.Single(item => item.Source == "TransactionQuery").ProcessingComment));
+    }
+
+    [Theory]
+    [InlineData("declined")]
+    [InlineData("currency")]
+    [InlineData("outcome")]
+    [InlineData("zero")]
+    public async Task Inapplicable_refund_receipts_do_not_satisfy_a_Refunded_RTTQ(string invalid)
+    {
+        var flow = await TimedOutPayment();
+        await flow.Query(QueryFields("Refunded"));
+        var fields = Fields("Refund", 1250);
+        if (invalid == "declined")
+        {
+            fields["txResultCode"] = "05";
+            fields["isApproved"] = false;
+        }
+        else if (invalid == "currency")
+            fields["currencyCode"] = "USD";
+        else if (invalid == "outcome")
+            fields["isApproved"] = false;
+        else
+            fields["transactionAmount"] = 0;
+
+        await flow.Service.ReceiveAsync(JsonSerializer.SerializeToElement(fields));
+
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(3, flow.Receipts.Count);
+        Assert.DoesNotContain(flow.Receipts, item => item.ProcessingState == "Applied");
+        Assert.Equal("Pending", flow.Receipts.Single(item => item.Source == "TransactionQuery").ProcessingState);
+    }
+
+    [Theory]
+    [InlineData("QAA")]
+    [InlineData("AQA")]
+    [InlineData("AAQ")]
+    public async Task Replayed_refund_UUIDs_count_once_when_reconciling_a_Refunded_RTTQ(string order)
+    {
+        var flow = await TimedOutPayment();
+        foreach (var item in order)
+        {
+            if (item == 'Q')
+                await flow.Query(QueryFields("Refunded"));
+            else
+                await flow.Receive("Refund", 625, "refund-a");
+        }
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.DoesNotContain(flow.Receipts, item => item.ProcessingState == "Applied");
+
+        await flow.Receive("Refund", 625, "refund-b");
+
+        Assert.Equal("Refunded", flow.Payment.State);
+        Assert.Equal(1250, flow.Payment.ApprovedAmount);
+        Assert.Equal(0, flow.Payment.RemainingAmount);
+        Assert.True(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(5, flow.Receipts.Count);
+        var refunds = flow.Receipts.Where(item => item.Source == "TransactionStatus").ToArray();
+        Assert.Equal(2, refunds.Count(item => item.ProcessingState == "Applied"));
+        Assert.Equal("Ignored", Assert.Single(refunds, item => item.ProcessingState != "Applied").ProcessingState);
+    }
+
+    [Theory]
+    [InlineData("ABQ")]
+    [InlineData("AQB")]
+    [InlineData("QAB")]
+    [InlineData("BAQ")]
+    [InlineData("BQA")]
+    [InlineData("QBA")]
+    public async Task Conflicting_pending_UUIDs_cannot_satisfy_a_Refunded_RTTQ(string order)
+    {
+        var flow = await TimedOutPayment();
+        foreach (var item in order)
+        {
+            if (item == 'Q')
+                await flow.Query(QueryFields("Refunded"));
+            else
+                await flow.Receive("Refund", item == 'A' ? 500 : 750);
+        }
+
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(4, flow.Receipts.Count);
+        Assert.All(flow.Receipts.Where(item => item.Source == "TransactionStatus"), AssertPendingConflict);
+        var query = Assert.Single(flow.Receipts, item => item.Source == "TransactionQuery");
+        Assert.Equal("Pending", query.ProcessingState);
+        Assert.False(string.IsNullOrWhiteSpace(query.ProcessingComment));
+        AssertConflictWarning(flow, flow.Receipts[^1]);
+    }
+
+    [Theory]
+    [InlineData("Refunded", "Reversal", "AQ")]
+    [InlineData("Refunded", "Reversal", "QA")]
+    [InlineData("Reversed", "Refund", "AQ")]
+    [InlineData("Reversed", "Refund", "QA")]
+    public async Task Contradictory_RTTQ_and_adjustment_histories_remain_unresolved_and_warn(
+        string state, string type, string order)
+    {
+        var flow = await TimedOutPayment();
+        foreach (var item in order)
+        {
+            if (item == 'Q')
+                await flow.Query(QueryFields(state));
+            else
+                await flow.Receive(type, 1250);
+        }
+
+        Assert.Equal("Unresolved", flow.Payment!.State);
+        Assert.Null(flow.Payment.RemainingAmount);
+        Assert.False(PaymentResult.FromPayment(flow.Payment).IsFullyReconciled);
+        Assert.Equal(3, flow.Receipts.Count);
+        var query = Assert.Single(flow.Receipts, item => item.Source == "TransactionQuery");
+        Assert.Equal("Pending", query.ProcessingState);
+        Assert.False(string.IsNullOrWhiteSpace(query.ProcessingComment));
+        Assert.DoesNotContain(flow.Receipts, item => item.ProcessingState == "Applied");
+        AssertConflictWarning(flow, flow.Receipts[^1]);
     }
 
     [Theory]
@@ -404,6 +754,36 @@ public sealed class TransactionStatusServiceTests
         flow.Session.Verify(value => value.DisposeAsync(), Times.Once);
     }
 
+    private static void AssertPendingConflict(PaymentEvent receipt)
+    {
+        Assert.Equal("Pending", receipt.ProcessingState);
+        Assert.NotNull(receipt.ProcessingComment);
+        Assert.Contains("conflict", receipt.ProcessingComment, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(receipt.ProcessedAt);
+    }
+
+    private static void AssertConflictWarning(Flow flow, PaymentEvent receipt) =>
+        flow.Logger.Verify(logger => logger.Log(LogLevel.Warning, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(PaymentId.ToString())
+                && state.ToString()!.Contains(receipt.PaymentEventId.ToString())),
+            It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.AtLeastOnce);
+
+    private static async Task<Flow> TimedOutPayment()
+    {
+        var flow = new Flow();
+        flow.Payment = flow.Payment! with { State = "Unresolved", ApprovedAmount = null, RemainingAmount = null };
+        var id = Guid.NewGuid();
+        await flow.Events.ProcessAsync(PaymentId, id,
+            new(id, PaymentId, "PaymentResponse", null, null, DateTimeOffset.UtcNow));
+        return flow;
+    }
+
+    private static Dictionary<string, object?> QueryFields(string state) => new()
+    {
+        ["TransactionID"] = PaymentId, ["OrderNumber"] = Rrn, ["TransactionStatus"] = state,
+        ["ResponseDetail"] = new { Source = "Acquirer", Code = "00" }, ["AuthAmount"] = 1250L
+    };
+
     private static Dictionary<string, object?> Fields(string type, long amount, string identifier = "event-1") => new()
     {
         ["transactionUUID"] = identifier, ["transactionType"] = type,
@@ -419,6 +799,7 @@ public sealed class TransactionStatusServiceTests
         public List<string> Calls { get; } = [];
         public Mock<IPaymentRepository> Repository { get; } = new(MockBehavior.Strict);
         public Mock<IPaymentProcessingSession> Session { get; } = new(MockBehavior.Strict);
+        public Mock<ILogger<PaymentEventService>> Logger { get; } = new();
         public PaymentEventService Events { get; }
         public TransactionStatusService Service { get; }
 
@@ -449,12 +830,19 @@ public sealed class TransactionStatusServiceTests
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(value => value.DisposeAsync()).Returns(ValueTask.CompletedTask);
             Events = new(Repository.Object, new PaymentResponseProcessor(), new TransactionStatusProcessor(),
-                TimeProvider.System, NullLogger<PaymentEventService>.Instance);
+                TimeProvider.System, Logger.Object);
             Service = new(Events, TimeProvider.System, NullLogger<TransactionStatusService>.Instance);
         }
 
         public Task Receive(string type, long amount, string identifier = "event-1") =>
             Service.ReceiveAsync(JsonSerializer.SerializeToElement(Fields(type, amount, identifier)));
+
+        public Task<Payment?> Query(Dictionary<string, object?> response)
+        {
+            var id = Guid.NewGuid();
+            return Events.ProcessAsync(PaymentId, id, new(id, PaymentId, "TransactionQuery",
+                JsonSerializer.SerializeToElement(new { PaymentResponse = response }), 200, DateTimeOffset.UtcNow));
+        }
 
         public Task<Payment?> BankApproval(string source)
         {
