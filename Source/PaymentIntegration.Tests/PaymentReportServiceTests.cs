@@ -58,6 +58,52 @@ public sealed class PaymentReportServiceTests
     }
 
     [Fact]
+    public async Task Currency_totals_combine_daily_activity_balances_and_flags_without_mixing_currencies()
+    {
+        var refunded = ReportTestData.Payment();
+        var approved = ReportTestData.Payment() with { SubMerchantId = "merchant-b", RequestedAmount = 6000,
+            CreatedAt = DateTimeOffset.Parse("2026-11-05T08:00:00Z") };
+        var declined = approved with { PaymentId = Guid.NewGuid(), RequestedAmount = 4200 };
+        var pending = approved with { PaymentId = Guid.NewGuid(), SubMerchantId = "merchant-c", RequestedAmount = 17000 };
+        var reversed = ReportTestData.Payment() with { SubMerchantId = "merchant-c", RequestedAmount = 50000 };
+        var usd = approved with { PaymentId = Guid.NewGuid(), SubMerchantId = "merchant-a", CurrencyCode = "USD", RequestedAmount = 2500 };
+        var (service, _) = ReportTestData.CreateService([
+            new(refunded, "Merchant A", [ReportTestData.Outcome(refunded), ReportTestData.Adjustment(refunded),
+                ReportTestData.Adjustment(refunded, "Reversal", 100000, "2026-11-06T10:00:00.000", "2026-11-06T08:00:00Z", "later-reversal")]),
+            new(approved, "Merchant B", [ReportTestData.Outcome(approved, "2026-11-05T10:01:00", "2026-11-05T08:01:00Z", amount: 6000)]),
+            new(declined, "Merchant B", [ReportTestData.Outcome(declined, "2026-11-05T10:01:00", "2026-11-05T08:01:00Z", "05", null)]),
+            new(pending, "Merchant C", []),
+            new(reversed, "Merchant C", [ReportTestData.Outcome(reversed, amount: 50000),
+                ReportTestData.Adjustment(reversed, "Reversal", 50000)]),
+            new(usd, "Merchant A", [ReportTestData.Outcome(usd, "2026-11-05T10:01:00", "2026-11-05T08:01:00Z", amount: 2500)])
+        ]);
+
+        var report = await service.GetDailyAsync(new(2026, 11, 5), CancellationToken.None);
+
+        Assert.Equal(2, report.CurrencySummaries.Count);
+        var zar = Assert.Single(report.CurrencySummaries, item => item.CurrencyCode == "ZAR");
+        Assert.Equal(3, zar.SubMerchantCount);
+        Assert.Equal(1, zar.FlaggedSubMerchantCount);
+        Assert.Equal(3, zar.PaymentsRequested);
+        Assert.Equal(27200, zar.TotalRequested);
+        Assert.Equal(1, zar.PaymentsApproved);
+        Assert.Equal(6000, zar.TotalApproved);
+        Assert.Equal(1, zar.PaymentsDeclined);
+        Assert.Equal(4200, zar.TotalDeclined);
+        Assert.Equal(1, zar.Reversals);
+        Assert.Equal(50000, zar.TotalReversed);
+        Assert.Equal(1, zar.Refunds);
+        Assert.Equal(30000, zar.TotalRefunded);
+        Assert.Equal(76000, zar.RemainingPaymentValue);
+        Assert.Equal(17000, zar.PendingApprovalValue);
+        var dollars = Assert.Single(report.CurrencySummaries, item => item.CurrencyCode == "USD");
+        Assert.Equal(1, dollars.SubMerchantCount);
+        Assert.Equal(2500, dollars.TotalApproved);
+        Assert.Equal(2500, dollars.RemainingPaymentValue);
+        Assert.Equal(0, dollars.FlaggedSubMerchantCount);
+    }
+
+    [Fact]
     public async Task Declined_values_use_requested_amounts_and_exclude_gateway_failures()
     {
         var declined = ReportTestData.Payment() with { RequestedAmount = 4250 };

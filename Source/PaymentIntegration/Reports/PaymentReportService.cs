@@ -56,7 +56,29 @@ public sealed class PaymentReportService(IPaymentReportRepository repository,
                 HasSubsequentActivity = group.Any(item => item.Historical.HasSubsequentActivity)
             });
         }
-        return new(date, clock.GetUtcNow(), summaries);
+        var currencies = summaries.GroupBy(item => item.CurrencyCode)
+            .OrderBy(group => group.Key == "ZAR" ? 0 : 1)
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new CurrencyPaymentSummary
+            {
+                CurrencyCode = group.Key,
+                SubMerchantCount = group.Count(),
+                FlaggedSubMerchantCount = group.Count(item => item.HasSubsequentActivity),
+                PaymentsRequested = group.Sum(item => item.PaymentsRequested),
+                TotalRequested = group.Sum(item => item.TotalRequested),
+                PaymentsApproved = group.Sum(item => item.PaymentsApproved),
+                TotalApproved = group.Sum(item => item.TotalApproved),
+                PaymentsDeclined = group.Sum(item => item.PaymentsDeclined),
+                TotalDeclined = group.Sum(item => item.TotalDeclined),
+                Reversals = group.Sum(item => item.Reversals),
+                TotalReversed = group.Sum(item => item.TotalReversed),
+                Refunds = group.Sum(item => item.Refunds),
+                TotalRefunded = group.Sum(item => item.TotalRefunded),
+                RemainingPaymentValue = group.Sum(item => item.RemainingPaymentValue),
+                UnknownRemainingPayments = group.Sum(item => item.UnknownRemainingPayments),
+                PendingApprovalValue = group.Sum(item => item.PendingApprovalValue)
+            }).ToArray();
+        return new(date, clock.GetUtcNow(), summaries, currencies);
     }
 
 }
