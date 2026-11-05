@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
+    <InternalsVisibleTo Include="PaymentIntegration.Tests" />
   </ItemGroup>
 </Project>
