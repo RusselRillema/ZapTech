@@ -104,8 +104,8 @@ public sealed class PaymentEventService(IPaymentRepository repository,
             operation = "commit payment event transaction";
             await session.CommitAsync(token);
             foreach (var item in investigations)
-                logger.LogWarning("Payment {PaymentId}, event {PaymentEventId} requires investigation: {Reason}",
-                    paymentId, item.PaymentEventId, item.ProcessingComment);
+                logger.LogWarning("Payment {PaymentId}, event {PaymentEventId} requires investigation after incoming event {IncomingPaymentEventId}: {Reason}",
+                    paymentId, item.PaymentEventId, eventId, item.ProcessingComment);
             logger.LogInformation("Processed payment {PaymentId}, event {PaymentEventId}; state {PaymentState}",
                 paymentId, eventId, payment?.State);
             return payment;
