@@ -11,7 +11,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf '%s\n' \
         'Usage: bash Scripts/run-demos.sh [--include-adjustments] [scenario ...] | --list' \
         'With no arguments, run the original six scenarios listed by the console application.' \
-        'Requires Docker Compose and a configured .env copied from .env.docker.example.' \
+        'Requires Docker Compose and a .env copied from the ready-to-run .env.docker.example.' \
         'DEMO_ENV_FILE selects another environment file; COMPOSE_PROJECT_NAME selects the stack.' \
         'Use a dedicated demo stack. Payments and database volumes are retained after the run.' \
         '--include-adjustments adds six full reversal/refund checks, requiring published step 6 code and SQL.' \
@@ -22,7 +22,7 @@ fi
 repository_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 environment_file=${DEMO_ENV_FILE:-"$repository_root/.env"}
 if [[ ! -f "$environment_file" ]]; then
-    printf 'Environment file not found: %s\nCopy .env.docker.example to .env and configure its values first.\n' "$environment_file" >&2
+    printf 'Environment file not found: %s\nCopy .env.docker.example to .env first; no editing is required for local Docker use.\n' "$environment_file" >&2
     exit 2
 fi
 command -v docker >/dev/null || { printf 'Docker is required.\n' >&2; exit 2; }
