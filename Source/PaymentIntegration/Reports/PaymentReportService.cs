@@ -1,4 +1,4 @@
-using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 
 namespace PaymentIntegration.Reports;
 

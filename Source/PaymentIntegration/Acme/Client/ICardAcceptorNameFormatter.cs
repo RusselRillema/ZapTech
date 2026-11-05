@@ -1,6 +1,6 @@
-using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Client;
 
 // A bank-specific implementation owns its statement descriptor requirements.
 public interface ICardAcceptorNameFormatter

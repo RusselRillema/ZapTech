@@ -1,7 +1,8 @@
 using System.Globalization;
-using PaymentIntegration.Payments;
+using PaymentIntegration.Acme.Contracts;
+using PaymentIntegration.Payments.Models;
 
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Client;
 
 public sealed class AcmeRequestFactory(AcmeSettings settings, TimeProvider clock, CardAcceptorNameFormatterFactory formatterFactory)
 {

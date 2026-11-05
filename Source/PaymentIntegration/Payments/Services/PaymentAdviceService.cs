@@ -1,7 +1,8 @@
 using System.Text.Json;
 using PaymentIntegration.Acme;
+using PaymentIntegration.Payments.Validation;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Payments.Services;
 
 public sealed class PaymentAdviceService(AcmeAdviceSettings settings, PaymentEventService events,
     TimeProvider clock, ILogger<PaymentAdviceService> logger)

@@ -27,7 +27,7 @@ PaymentIntegration exposes [http://127.0.0.1:5080/health](http://127.0.0.1:5080/
 Using your existing privileged `psql` connection, outside a transaction, run:
 
 ```text
-\i Source/PaymentIntegration/Database/setup.sql
+\i Source/PaymentIntegration/Database/Sql/setup.sql
 ```
 
 The script reads no `.env` files. It creates `payment_integration`, owned by the connected role, and the non-admin login `payment_integration_app` with password `payment_integration_dev_only`. It creates catalogue, payment and event tables plus payment procedures, and seeds five synthetic customers, three sub-merchants and eight tokenised cards. These are fixed development credentials; use the same values when configuring a database client. Existing target databases/logins are rejected before creation, without resetting passwords or deleting data.
@@ -35,7 +35,7 @@ The script reads no `.env` files. It creates `payment_integration`, owned by the
 For removal, stop application connections first, then explicitly run:
 
 ```text
-\i Source/PaymentIntegration/Database/remove.sql
+\i Source/PaymentIntegration/Database/Sql/remove.sql
 ```
 
 Only the application database and login are removed; the server and other databases remain. The scripts use psql commands and work from Windows, macOS and Linux terminals with an already configured connection.
@@ -90,7 +90,7 @@ Fresh setup includes `004_ReportingReads.sql`. For an existing database, connect
 
 ```text
 BEGIN;
-\i Source/PaymentIntegration/Database/004_ReportingReads.sql
+\i Source/PaymentIntegration/Database/Sql/004_ReportingReads.sql
 GRANT EXECUTE ON PROCEDURE public.payments_get_report_history(timestamptz) TO payment_integration_app;
 COMMIT;
 ```

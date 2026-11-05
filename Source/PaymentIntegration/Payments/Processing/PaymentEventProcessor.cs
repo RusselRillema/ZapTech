@@ -1,4 +1,6 @@
-namespace PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+
+namespace PaymentIntegration.Payments.Processing;
 
 // Callers supply pending receipts and the complete adjustment history for one payment.
 // Persistence, historical cutoff selection and retry decisions remain with the caller.

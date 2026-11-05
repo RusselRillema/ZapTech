@@ -1,7 +1,9 @@
 using Npgsql;
 using NpgsqlTypes;
+using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Database.Repositories;
 
 public sealed class PaymentRepository(NpgsqlDataSource dataSource, ILogger<PaymentRepository> logger)
     : IPaymentRepository

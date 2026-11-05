@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 using Xunit;
 
 namespace PaymentIntegration.Tests;

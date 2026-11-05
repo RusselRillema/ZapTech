@@ -1,7 +1,8 @@
 using System.Text.Json;
 using NpgsqlTypes;
+using PaymentIntegration.Payments.Models;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Database.Repositories;
 
 // Maps the explicit PostgreSQL result type, independently of the table's shape.
 internal sealed class PaymentEventRow

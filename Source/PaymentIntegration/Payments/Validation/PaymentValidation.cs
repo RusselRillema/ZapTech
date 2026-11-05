@@ -1,4 +1,6 @@
-namespace PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+
+namespace PaymentIntegration.Payments.Validation;
 
 public static class PaymentValidation
 {

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Contracts;
 
 public sealed record AcmeHeader(string MessageDateTime, string MessageID, string Channel);
 public sealed record AcmeCard(string Token);
@@ -15,9 +15,3 @@ public sealed record AcmeReply(
     string? Failure = null,
     TimeSpan? RetryDelay = null,
     bool RequestAttempted = true);
-
-public interface IAcmePaymentClient
-{
-    Task<AcmeReply> SubmitAsync(AcmeEnvelope request, CancellationToken cancellationToken);
-    Task<AcmeReply> QueryAsync(Guid paymentId, CancellationToken cancellationToken);
-}

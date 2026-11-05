@@ -1,3 +1,5 @@
+using PaymentIntegration.Payments.Models;
+
 namespace PaymentIntegration.Payments;
 
 public interface IPaymentRepository

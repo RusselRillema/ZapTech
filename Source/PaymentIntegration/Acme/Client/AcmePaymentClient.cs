@@ -2,8 +2,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.RateLimiting;
+using PaymentIntegration.Acme.Contracts;
 
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Client;
 
 public sealed class AcmePaymentClient(HttpClient httpClient, AcmeSettings settings,
     ConcurrencyLimiter limiter, ILogger<AcmePaymentClient> logger) : IAcmePaymentClient

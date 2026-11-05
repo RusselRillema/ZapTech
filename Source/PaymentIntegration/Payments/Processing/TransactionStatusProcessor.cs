@@ -1,6 +1,8 @@
 using System.Text.Json;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Validation;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Payments.Processing;
 
 public sealed class TransactionStatusProcessor
 {

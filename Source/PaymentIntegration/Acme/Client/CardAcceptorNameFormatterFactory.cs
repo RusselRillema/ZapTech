@@ -1,4 +1,4 @@
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Client;
 
 public sealed class CardAcceptorNameFormatterFactory(FnbCardAcceptorNameFormatter formatter)
 {

@@ -2,7 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Logging;
-using PaymentIntegration.Acme;
+using PaymentIntegration.Acme.Client;
+using PaymentIntegration.Acme.Contracts;
 using Xunit;
 
 namespace PaymentIntegration.Tests;
@@ -175,7 +176,7 @@ public sealed class AcmePaymentClientTests
     {
         var paymentId = Guid.NewGuid();
         var calls = 0;
-        var logger = new CapturingLogger<PaymentIntegration.Acme.AcmePaymentClient>();
+        var logger = new CapturingLogger<PaymentIntegration.Acme.Client.AcmePaymentClient>();
         using var handler = new Handler(message =>
         {
             calls++;

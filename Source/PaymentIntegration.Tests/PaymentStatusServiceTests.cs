@@ -1,5 +1,7 @@
 using Moq;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Services;
 using Xunit;
 
 namespace PaymentIntegration.Tests;

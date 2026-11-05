@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
-using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 
 namespace PaymentIntegration.Reports;
 

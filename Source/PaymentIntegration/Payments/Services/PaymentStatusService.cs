@@ -1,4 +1,7 @@
-namespace PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Validation;
+
+namespace PaymentIntegration.Payments.Services;
 
 public sealed class PaymentStatusService(IPaymentRepository repository)
 {

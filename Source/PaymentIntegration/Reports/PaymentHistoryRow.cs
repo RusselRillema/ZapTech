@@ -1,5 +1,6 @@
 using NpgsqlTypes;
-using PaymentIntegration.Payments;
+using PaymentIntegration.Database.Repositories;
+using PaymentIntegration.Payments.Models;
 
 namespace PaymentIntegration.Reports;
 

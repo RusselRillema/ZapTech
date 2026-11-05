@@ -1,5 +1,6 @@
 using System.Text.Json;
-using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Processing;
 using PaymentIntegration.Reports;
 
 namespace PaymentIntegration.Tests;

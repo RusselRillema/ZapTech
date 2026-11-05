@@ -1,6 +1,7 @@
 using System.Text.Json;
+using PaymentIntegration.Payments.Validation;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Payments.Services;
 
 public sealed class TransactionStatusService(PaymentEventService events, TimeProvider clock,
     ILogger<TransactionStatusService> logger)

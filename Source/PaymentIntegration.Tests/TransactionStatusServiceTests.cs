@@ -3,6 +3,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Processing;
+using PaymentIntegration.Payments.Services;
 using Xunit;
 
 namespace PaymentIntegration.Tests;

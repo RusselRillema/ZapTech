@@ -1,4 +1,7 @@
-namespace PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Processing;
+
+namespace PaymentIntegration.Payments.Services;
 
 public sealed class PaymentEventService(IPaymentRepository repository,
     PaymentResponseProcessor processor, PaymentEventProcessor eventProcessor,

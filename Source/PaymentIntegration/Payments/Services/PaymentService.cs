@@ -1,7 +1,10 @@
 using System.Security.Cryptography;
-using PaymentIntegration.Acme;
+using PaymentIntegration.Acme.Client;
+using PaymentIntegration.Acme.Contracts;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Validation;
 
-namespace PaymentIntegration.Payments;
+namespace PaymentIntegration.Payments.Services;
 
 public sealed class PaymentService(IPaymentRepository repository, IAcmePaymentClient acme,
     AcmeRequestFactory requestFactory, PaymentEventService events,

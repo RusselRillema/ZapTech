@@ -1,6 +1,6 @@
-using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 
-namespace PaymentIntegration.Acme;
+namespace PaymentIntegration.Acme.Client;
 
 public sealed class FnbCardAcceptorNameFormatter : ICardAcceptorNameFormatter
 {
