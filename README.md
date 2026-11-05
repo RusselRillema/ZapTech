@@ -152,9 +152,9 @@ curl -sS "http://127.0.0.1:5080/payments?appPaymentId=app-payment-001"
 curl -fS "http://127.0.0.1:5080/reports/payments/daily?date=2026-11-04" -o daily-payments.pdf
 ```
 
-Keep the same `appPaymentId` when retrying: identical details return the stored payment; changed details return 409. Reports accept `yyyy-MM-dd` and group daily counts/totals by sub-merchant and currency. The PDF has currency summary cards, merchant rows and currency subtotals, with separate pages for each currency. ZAR is displayed in rand; other currencies are labelled in minor units.
+Keep the same `appPaymentId` when retrying: identical details return the stored payment; changed details return 409. Reports accept `yyyy-MM-dd` and group daily counts/totals by sub-merchant and currency.
 
-Fresh setup includes sample payments for **2026-11-04** in ZAR, USD, EUR and GBP. For existing databases, apply the [catalogue and multi-currency seed](Source/PaymentIntegration/Database/Sql/002_SeedSampleData.sql) and [historical ZAR samples](Source/PaymentIntegration/Database/Sql/005_SeedReportData.sql) as a PostgreSQL administrator in one transaction. Fixed IDs preserve existing payments and histories on reruns.
+Fresh setup includes sample payments for **2026-11-04**. For existing databases, run the [sample seed script](Source/PaymentIntegration/Database/Sql/002_SeedSampleData.sql) and [report seed script](Source/PaymentIntegration/Database/Sql/005_SeedReportData.sql) as a PostgreSQL administrator in one transaction.
 
 The environment templates configure Acme callbacks to `POST /notifications/payment-advice` (Basic authentication) and `POST /notifications/transaction-status` (HMAC signature). API callers need no authentication.
 
