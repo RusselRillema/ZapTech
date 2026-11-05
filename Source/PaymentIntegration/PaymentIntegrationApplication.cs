@@ -46,6 +46,7 @@ public static class PaymentIntegrationApplication
         builder.Services.AddSingleton<AcmeRequestFactory>();
         builder.Services.AddScoped<PaymentResponseProcessor>();
         builder.Services.AddScoped<TransactionStatusProcessor>();
+        builder.Services.AddScoped<PaymentEventProcessor>();
         builder.Services.AddScoped<PaymentEventService>();
         builder.Services.AddScoped<PaymentAdviceService>();
         builder.Services.AddScoped<TransactionStatusService>();

@@ -1087,7 +1087,8 @@ public sealed class TransactionStatusServiceTests
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(value => value.DisposeAsync()).Returns(ValueTask.CompletedTask);
             var statusProcessor = new TransactionStatusProcessor();
-            Events = new(Repository.Object, new PaymentResponseProcessor(statusProcessor), statusProcessor,
+            var responseProcessor = new PaymentResponseProcessor(statusProcessor);
+            Events = new(Repository.Object, responseProcessor, new PaymentEventProcessor(responseProcessor, statusProcessor),
                 TimeProvider.System, Logger.Object);
             Service = new(Events, TimeProvider.System, NullLogger<TransactionStatusService>.Instance);
         }

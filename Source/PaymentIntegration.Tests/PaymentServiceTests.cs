@@ -1017,7 +1017,8 @@ public sealed class PaymentServiceTests
                 .Callback(() => Calls.Add("commit")).Returns(Task.CompletedTask);
             Session.Setup(session => session.DisposeAsync()).Callback(() => Calls.Add("dispose")).Returns(ValueTask.CompletedTask);
             var statusProcessor = new TransactionStatusProcessor();
-            EventService = new(Repository.Object, new PaymentResponseProcessor(statusProcessor), statusProcessor, clock,
+            var responseProcessor = new PaymentResponseProcessor(statusProcessor);
+            EventService = new(Repository.Object, responseProcessor, new PaymentEventProcessor(responseProcessor, statusProcessor), clock,
                 NullLogger<PaymentEventService>.Instance);
             Service = new(Repository.Object, Client.Object,
                 new AcmeRequestFactory(new(new Uri("http://localhost:5081"), Guid.NewGuid().ToString(), "sensitive-api-key"),
