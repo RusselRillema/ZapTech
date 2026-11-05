@@ -22,6 +22,7 @@ public sealed class PaymentStore(
         public bool HoldCallbacks => Scenario.HoldCallbacks;
         public int SubmissionCount { get; set; } = 1;
         public bool ResponseInterrupted { get; set; }
+        public HashSet<string> StatusTriggers { get; } = new(StringComparer.Ordinal);
         public List<StoredCallback> Callbacks { get; } = [];
     }
 
@@ -128,8 +129,9 @@ public sealed class PaymentStore(
         {
             if (!_transactions.TryGetValue(transactionId, out var payment))
                 return Results.NotFound();
-            if (payment.Current.TransactionStatus != "Success" || payment.Current.ResponseDetail.Code != "00")
-                return Results.Conflict(new { error = "This happy-path trigger requires an approved payment." });
+            if (payment.Original.TransactionStatus != "Success" || payment.Original.ResponseDetail.Code != "00"
+                || payment.StatusTriggers.Contains(type))
+                return Results.Conflict(new { error = "Requires an approved payment and one trigger per adjustment type; use callback replay for duplicate deliveries." });
             if (amount != payment.Original.AuthAmount)
             {
                 //TODO: Support partial refund scenarios and their lifecycle semantics when that work is requested.
@@ -143,7 +145,13 @@ public sealed class PaymentStore(
                 return Results.StatusCode(503);
 
             payment.Callbacks.Add(new(delivery, payment.HoldCallbacks));
-            payment.Current = payment.Current with { TransactionStatus = type == "Reversal" ? "Reversed" : "Refunded" };
+            payment.StatusTriggers.Add(type);
+            // Both full notifications can be generated to demonstrate precedence.
+            // A refund notification after a full reversal does not undo that reversal.
+            payment.Current = payment.Current with
+            {
+                TransactionStatus = payment.StatusTriggers.Contains("Reversal") ? "Reversed" : "Refunded"
+            };
             return Results.Accepted(value: new { transactionUUID = status.TransactionUUID, rrn = status.Rrn });
         }
     }

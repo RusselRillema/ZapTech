@@ -10,6 +10,8 @@ internal sealed class DemoRunner(HttpClient payments, HttpClient acme, DemoSetti
 {
     public static readonly string[] Scenarios =
         ["approval", "decline", "duplicate-submission", "duplicate-notification", "out-of-order", "timeout"];
+    public static readonly string[] AdjustmentScenarios =
+        ["reversal", "refund", "reversal-before-approval", "refund-before-approval", "refund-then-reversal", "reversal-then-refund"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public async Task RunAsync(string name, CancellationToken cancellationToken)
@@ -23,8 +25,13 @@ internal sealed class DemoRunner(HttpClient payments, HttpClient acme, DemoSetti
         await output.WriteLineAsync($"Scenario {name}; appPaymentId={request.AppPaymentId}");
         try
         {
-            var delay = name == "timeout" ? 40 : name == "out-of-order" ? 15 : 0;
+            var delay = name == "timeout" ? 40 : name == "out-of-order" || name.EndsWith("-before-approval", StringComparison.Ordinal) ? 15 : 0;
             await ConfigureAsync(new(name == "decline" ? "Declined" : "Approved", delay), cancellationToken);
+            if (AdjustmentScenarios.Contains(name, StringComparer.Ordinal))
+            {
+                await AdjustmentsAsync(name, request, cancellationToken);
+                return;
+            }
             if (name is "out-of-order" or "timeout")
             {
                 await DelayedAsync(name, request, cancellationToken);
@@ -116,6 +123,103 @@ internal sealed class DemoRunner(HttpClient payments, HttpClient acme, DemoSetti
         await CheckAsync(response, "Configure Acme scenario", cancellationToken);
     }
 
+    private async Task AdjustmentsAsync(string name, DemoPaymentRequest request, CancellationToken cancellationToken)
+    {
+        var early = name.EndsWith("-before-approval", StringComparison.Ordinal);
+        var firstType = name.StartsWith("refund", StringComparison.Ordinal) ? "Refund" : "Reversal";
+        var firstState = firstType == "Refund" ? "Refunded" : "Reversed";
+        using var pending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var submission = SubmitAsync(request, pending.Token);
+        try
+        {
+            ObservedPayment payment;
+            if (early)
+            {
+                payment = await WaitAsync(() => FindAsync(request.AppPaymentId, cancellationToken),
+                    _ => true, "payment to be persisted", cancellationToken);
+                ExpectUnresolved(payment, request);
+                await AdviceAsync(payment.PaymentId, cancellationToken);
+            }
+            else
+            {
+                payment = await submission;
+                ExpectApproved(payment, request);
+            }
+
+            var first = await TriggerAdjustmentAsync(payment.PaymentId, firstType, request.Amount, cancellationToken);
+            await SendStoredCallbackAsync(payment.PaymentId, first, cancellationToken);
+            if (early)
+            {
+                Require(!submission.IsCompleted, "The payment response arrived before the adjustment was acknowledged.");
+                var beforeAdvice = await FindAsync(request.AppPaymentId, cancellationToken)
+                    ?? throw new InvalidOperationException("The persisted payment disappeared.");
+                ExpectUnresolved(beforeAdvice, request);
+                Observe("Adjustment acknowledged before approval and Advice", beforeAdvice);
+                await SendAdviceAsync(payment.PaymentId, cancellationToken);
+                Require(!submission.IsCompleted, "The payment response arrived before early Advice was acknowledged.");
+                var afterAdvice = await FindAsync(request.AppPaymentId, cancellationToken)
+                    ?? throw new InvalidOperationException("The persisted payment disappeared.");
+                ExpectUnresolved(afterAdvice, request);
+                Observe("Adjustment and Advice await authoritative AuthAmount", afterAdvice);
+                var reply = await submission;
+                ExpectAdjusted(reply, request, firstState);
+            }
+
+            var adjusted = await ReconciledAsync(request.AppPaymentId, firstState, cancellationToken);
+            ExpectAdjusted(adjusted, request, firstState);
+            Observe("After " + firstType, adjusted);
+
+            string? second = null;
+            if (name is "refund-then-reversal" or "reversal-then-refund")
+            {
+                var secondType = firstType == "Refund" ? "Reversal" : "Refund";
+                second = await TriggerAdjustmentAsync(payment.PaymentId, secondType, request.Amount, cancellationToken);
+                await SendStoredCallbackAsync(payment.PaymentId, second, cancellationToken);
+                adjusted = await ReconciledAsync(request.AppPaymentId, "Reversed", cancellationToken);
+                ExpectAdjusted(adjusted, request, "Reversed");
+                Observe("Full reversal takes precedence in " + name, adjusted);
+            }
+
+            // These are real duplicate deliveries from the stub, retaining their original
+            // bytes/identity. No signed notification is constructed in this runner.
+            await SendStoredCallbackAsync(payment.PaymentId, first, cancellationToken);
+            if (second is not null)
+                await SendStoredCallbackAsync(payment.PaymentId, second, cancellationToken);
+            await SendAdviceAsync(payment.PaymentId, cancellationToken);
+            await SendAdviceAsync(payment.PaymentId, cancellationToken);
+            var afterReplays = await ReconciledAsync(request.AppPaymentId, adjusted.State, cancellationToken);
+            Require(afterReplays == adjusted, "Adjustment replay or late approval Advice changed an adjusted payment.");
+            Observe("After adjustment replay and late approval Advice", afterReplays);
+        }
+        finally
+        {
+            pending.Cancel();
+            try { await submission; }
+            catch (Exception) when (submission.IsCanceled || submission.IsFaulted) { }
+        }
+    }
+
+    private async Task<string> TriggerAdjustmentAsync(Guid id, string type, long amount, CancellationToken cancellationToken)
+    {
+        using var response = await acme.PostAsJsonAsync($"/__stub/transactions/{id:D}/{type.ToLowerInvariant()}",
+            new { Amount = amount }, cancellationToken);
+        await CheckAsync(response, "Generate full " + type + " in Acme", cancellationToken);
+        var generated = await response.Content.ReadFromJsonAsync<TriggeredAdjustment>(cancellationToken)
+            ?? throw new InvalidOperationException("Acme returned no adjustment identity.");
+        Require(!string.IsNullOrWhiteSpace(generated.TransactionUUID) && !string.IsNullOrWhiteSpace(generated.Rrn),
+            "Acme returned an adjustment without its switch identity or original RRN.");
+        await output.WriteLineAsync($"Acme generated {type}: transactionUUID={generated.TransactionUUID}, rrn={generated.Rrn}");
+        return generated.TransactionUUID;
+    }
+
+    private static void ExpectAdjusted(ObservedPayment payment, DemoPaymentRequest request, string state)
+    {
+        ExpectIdentity(payment, request);
+        Require(payment.State == state && payment.ApprovedAmount == request.Amount
+            && payment.RemainingAmount == 0 && payment.IsFullyReconciled,
+            $"Expected reconciled {state}, the original approved amount, and zero remaining value.");
+    }
+
     private async Task<ObservedPayment> SubmitAsync(DemoPaymentRequest request, CancellationToken cancellationToken)
     {
         using var response = await payments.PostAsJsonAsync("/payments", request, cancellationToken);
@@ -151,13 +255,31 @@ internal sealed class DemoRunner(HttpClient payments, HttpClient acme, DemoSetti
     private async Task SendAdviceAsync(Guid id, CancellationToken cancellationToken)
     {
         var before = await AdviceAsync(id, cancellationToken);
+        await SendStoredCallbackAsync(id, before.Identifier, cancellationToken);
+    }
+
+    private async Task<ObservedCallback> CallbackAsync(Guid id, string identifier, CancellationToken cancellationToken)
+    {
+        var callbacks = await WaitAsync(() => GetAsync<ObservedCallback[]>(acme,
+                $"/__stub/transactions/{id:D}/callbacks", cancellationToken),
+            items => items.Any(item => item.Identifier == identifier), "Acme to retain the generated callback", cancellationToken);
+        return callbacks.Single(item => item.Identifier == identifier);
+    }
+
+    private async Task SendStoredCallbackAsync(Guid id, string identifier, CancellationToken cancellationToken)
+    {
+        var before = await CallbackAsync(id, identifier, cancellationToken);
         using var response = await acme.PostAsync(
             $"/__stub/transactions/{id:D}/callbacks/{Uri.EscapeDataString(before.Identifier)}/send", null, cancellationToken);
-        await CheckAsync(response, "Send stored Payment Advice", cancellationToken);
-        var acknowledged = await WaitAsync(async () => await AdviceAsync(id, cancellationToken),
-            item => item.Acknowledgements > before.Acknowledgements,
-            "Payment Advice acknowledgement after service commit", cancellationToken);
-        Require(acknowledged.LastHttpStatusCode == 200, "The service did not acknowledge Payment Advice with HTTP 200.");
+        await CheckAsync(response, "Send stored " + before.Kind, cancellationToken);
+        var acknowledged = await WaitAsync(async () => await CallbackAsync(id, identifier, cancellationToken),
+            item =>
+            {
+                if (item.Kind == "TransactionStatus" && item.LastHttpStatusCode == 404)
+                    throw new InvalidOperationException("Transaction Status receiver returned 404. Include the published Task 1 Step 6 code and deploy its SQL before running adjustment demonstrations.");
+                return item.Acknowledgements > before.Acknowledgements;
+            }, before.Kind + " acknowledgement after service commit", cancellationToken);
+        Require(acknowledged.LastHttpStatusCode == 200, "The service did not acknowledge " + before.Kind + " with HTTP 200.");
         await output.WriteLineAsync($"Callback {acknowledged.Identifier}: completedAttempts={acknowledged.CompletedAttempts}, acknowledgements={acknowledged.Acknowledgements}, lastHTTP={acknowledged.LastHttpStatusCode}");
     }
 

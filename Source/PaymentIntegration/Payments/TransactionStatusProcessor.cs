@@ -4,10 +4,12 @@ namespace PaymentIntegration.Payments;
 
 public sealed class TransactionStatusProcessor
 {
+    private const string DuplicateComment = "This Acme event has already been recorded.";
+
     private sealed record Adjustment(PaymentEvent Receipt, string Identifier, string Type,
         string Timestamp, long Amount, string Code, bool Approved);
 
-    public (Payment Payment, IReadOnlyList<PaymentEvent> Events) Process(
+    public (Payment Payment, IReadOnlyList<PaymentEvent> Events, bool HasConflictingEvidence) Process(
         Payment payment, IReadOnlyList<PaymentEvent> history, DateTimeOffset processedAt)
     {
         var events = history.ToDictionary(item => item.PaymentEventId);
@@ -47,23 +49,39 @@ public sealed class TransactionStatusProcessor
         }
 
         // Compare business fields, accepting changes in JSON layout and unknown fields.
-        // A reused identity with different details cannot establish an adjustment.
         var groups = adjustments.GroupBy(item => item.Identifier, StringComparer.Ordinal).ToArray();
-        var conflictingIdentity = groups.Any(group => group.Select(item =>
-            (item.Type, item.Timestamp, item.Amount, item.Code, item.Approved)).Distinct().Skip(1).Any());
-        var conflictingOutcome = adjustments.Any(item => (item.Code == "00") != item.Approved);
-        if (conflictingIdentity || conflictingOutcome)
+        var conflictingGroups = groups.Where(group => group.Select(Details).Distinct().Skip(1).Any()).ToArray();
+        var representatives = new List<Adjustment>();
+        foreach (var group in conflictingGroups)
         {
-            foreach (var item in adjustments)
-                Set(item.Receipt, "Pending", conflictingIdentity
-                    ? "Acme event identifier has conflicting details; reconciliation is required."
-                    : "Switch outcome indicators conflict; reconciliation is required.");
-            return (payment.HasApproval ? payment with { State = "Approved", RemainingAmount = null } : payment,
-                events.Values.ToArray());
+            // Issue #34: a conflicting duplicate cannot invalidate an established
+            // adjustment or remove an ignored refund's limit from the history.
+            var established = group.Where(item => item.Receipt.ProcessingState == "Applied"
+                    || item.Receipt.ProcessingState == "Ignored" && item.Receipt.ProcessingComment != DuplicateComment)
+                .OrderByDescending(item => item.Receipt.ProcessingState == "Applied")
+                .ThenBy(item => item.Receipt.ReceivedAt).ThenBy(item => item.Receipt.PaymentEventId).FirstOrDefault();
+            foreach (var item in group.Where(item => item.Receipt.ProcessingState == "Pending"))
+            {
+                if (established is not null && Details(item) == Details(established))
+                    Set(item.Receipt, "Ignored", DuplicateComment);
+                else
+                    Set(item.Receipt, "Pending", "Acme event identifier has conflicting details; investigation is required.");
+            }
+            if (established is not null)
+                representatives.Add(established);
         }
 
-        var candidates = new List<Adjustment>();
-        foreach (var group in groups)
+        var validGroups = groups.Except(conflictingGroups).ToArray();
+        var conflictingOutcome = validGroups.SelectMany(group => group).Any(item => (item.Code == "00") != item.Approved);
+        if (conflictingOutcome)
+        {
+            foreach (var item in validGroups.SelectMany(group => group))
+                Set(item.Receipt, "Pending", "Switch outcome indicators conflict; investigation is required.");
+            return (payment.HasApproval ? payment with { State = "Approved", RemainingAmount = null } : payment,
+                events.Values.ToArray(), true);
+        }
+
+        foreach (var group in validGroups)
         {
             // Keep an already-applied receipt as the representative of a replay.
             var ordered = group.OrderByDescending(item => item.Receipt.ProcessingState == "Applied")
@@ -71,8 +89,13 @@ public sealed class TransactionStatusProcessor
                 .ThenBy(item => item.Receipt.ReceivedAt).ThenBy(item => item.Receipt.PaymentEventId).ToArray();
             var item = ordered[0];
             foreach (var duplicate in ordered.Skip(1))
-                Set(duplicate.Receipt, "Ignored", "This Acme event has already been recorded.");
+                Set(duplicate.Receipt, "Ignored", DuplicateComment);
+            representatives.Add(item);
+        }
 
+        var candidates = new List<Adjustment>();
+        foreach (var item in representatives)
+        {
             if (!item.Approved)
                 Set(item.Receipt, "Ignored", "Acme Switch did not apply this adjustment.");
             else if (item.Amount <= 0)
@@ -88,7 +111,7 @@ public sealed class TransactionStatusProcessor
         }
 
         if (candidates.Count == 0)
-            return (payment, events.Values.ToArray());
+            return (payment, events.Values.ToArray(), conflictingGroups.Length > 0);
 
         // Reconstruct the current value from the complete adjustment history. Never
         // subtract a replay from the already-reduced persisted balance.
@@ -102,7 +125,7 @@ public sealed class TransactionStatusProcessor
                 Set(item.Receipt, item == reversal ? "Applied" : "Ignored", item == reversal ? null
                     : "A full reversal already accounts for the approved value.");
             }
-            return (payment with { State = "Reversed", RemainingAmount = 0 }, events.Values.ToArray());
+            return (payment with { State = "Reversed", RemainingAmount = 0 }, events.Values.ToArray(), conflictingGroups.Length > 0);
         }
 
         var total = 0L;
@@ -127,8 +150,11 @@ public sealed class TransactionStatusProcessor
 
         var state = total == 0 ? "Approved" : total == payment.ApprovedAmount ? "Refunded" : "PartiallyRefunded";
         return (payment with { State = state, RemainingAmount = payment.ApprovedAmount - total },
-            events.Values.ToArray());
+            events.Values.ToArray(), ignoringRefunds || conflictingGroups.Length > 0);
     }
+
+    private static (string Type, string Timestamp, long Amount, string Code, bool Approved) Details(Adjustment item) =>
+        (item.Type, item.Timestamp, item.Amount, item.Code, item.Approved);
 
     private static PaymentEvent Classify(PaymentEvent receipt, string state, string? comment, DateTimeOffset processedAt)
     {

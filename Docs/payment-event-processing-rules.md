@@ -27,6 +27,10 @@
 
 - If submission leaves the outcome unknown, query Acme once using the same transaction ID. Allow up to 10 seconds within the existing 60-second submission window.
 - Process the query as a payment event. Inconclusive results remain unresolved for later recovery.
+- An RTTQ `Refunded` snapshot without a valid `AuthAmount`, or without complete matching refund history, leaves an unknown payment **Unresolved**. Do not infer the original authorised amount from webhook amounts or infer a remaining balance from an incomplete history.
+- Resolve a `Refunded` snapshot automatically only when its authoritative `AuthAmount` and distinct matching successful refund webhooks account for the full approved value. Replayed webhook identities count once. Set **Refunded** with the approved amount retained and a remaining amount of zero.
+- A `Reversed` snapshot likewise requires authoritative `AuthAmount` and a matching successful full reversal.
+- Conflicting snapshot and recorded event evidence remains **Unresolved** for an unknown payment. Keep an explanatory **Pending** event comment requiring investigation and log a warning with the payment and event identifiers. Preserve previously established bank outcomes when a conflicting query cannot be applied.
 
 ## Payment Events and Amounts
 
@@ -36,12 +40,14 @@
 
 - All notifications for a specific payment must use the payment's currency. A notification in a different currency is stored as a payment event and marked **Ignored**; it must not change the payment's state or value.
 
-- Events may arrive more than once or out of order. Arrival order must not determine the payment's final state.
+- Events may arrive more than once or out of order. Normal valid adjustment histories, including exact replays, must produce the same final payment state and value regardless of arrival order. Conflicting duplicates follow the preserve-established-state policy confirmed in [Issue #34](https://github.com/RusselRillema/ZapTech/issues/34): they cannot replace an established financial effect, so different delivery orders of contradictory contents can retain different established balances pending investigation.
 
 - An event has one of three processing states:
-  - **Pending** — received, but cannot yet be applied because required lifecycle information or an E29 retry outcome is not known.
+  - **Pending** — received, but cannot yet be applied because required lifecycle information or an E29 retry outcome is not known, or retained for investigation because adjustment contents conflict.
   - **Applied** — successfully used to update the current payment state or value.
   - **Ignored** — recorded for audit purposes but will never be applied because it conflicts with the established payment lifecycle.
+
+- A delivery that reuses an existing `transactionUUID` with changed adjustment contents is retained as a separate **Pending** audit receipt with a conflict explanation and logged for investigation with payment and incoming event identifiers. It is not applied as a new financial event and must not change the payment's established State, ApprovedAmount or RemainingAmount, or previously Applied and Ignored receipts. If an identity has only conflicting Pending receipts, none of them can establish an adjustment when approval later arrives.
 
 - Whenever an event is applied, any pending events for that payment should be reconsidered because they may now be applicable.
 

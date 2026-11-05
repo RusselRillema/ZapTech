@@ -25,6 +25,7 @@ public sealed class PaymentEventService(IPaymentRepository repository,
         {
             await using var session = await beginSession(token);
             var payment = session.Payment;
+            PaymentEvent[] investigations = [];
             paymentId = payment?.PaymentId ?? paymentId;
             if (payment is null && receipt?.Source is not ("PaymentAdvice" or "TransactionStatus"))
             {
@@ -51,7 +52,7 @@ public sealed class PaymentEventService(IPaymentRepository repository,
                 operation = "read pending payment events";
                 var pending = (await session.GetPendingEventsAsync(token)).ToArray();
                 IReadOnlyList<PaymentEvent> statusHistory = [];
-                if (pending.Any(item => item.Source == "TransactionStatus"))
+                if (pending.Any(item => item.Source == "TransactionStatus" || PaymentResponseProcessor.IsAdjustedQuery(item)))
                 {
                     operation = "read transaction status history";
                     statusHistory = await session.GetTransactionStatusEventsAsync(token);
@@ -68,7 +69,7 @@ public sealed class PaymentEventService(IPaymentRepository repository,
                         operation = "process payment event";
                         // Earlier E29 receipts await the current attempt's outcome.
                         var deferRateLimitFailure = pending[index].PaymentEventId != eventId || retryingRateLimit;
-                        var result = processor.Process(payment, pending[index], clock.GetUtcNow(), deferRateLimitFailure);
+                        var result = processor.Process(payment, pending[index], clock.GetUtcNow(), deferRateLimitFailure, statusHistory);
                         payment = result.Payment;
                         pending[index] = result.Event;
                         applied |= result.Event.ProcessingState == "Applied";
@@ -87,6 +88,8 @@ public sealed class PaymentEventService(IPaymentRepository repository,
                 } while (applied);
 
                 var updatedEvents = pending.Where(item => item.Source != "TransactionStatus").Concat(statusHistory).ToArray();
+                investigations = updatedEvents.Where(item => item.ProcessingState == "Pending"
+                    && item.ProcessingComment?.Contains("investigation", StringComparison.OrdinalIgnoreCase) == true).ToArray();
                 payment = payment with { HasPendingEvents = updatedEvents.Any(item => item.ProcessingState == "Pending") };
                 operation = "save payment";
                 await session.SavePaymentAsync(payment, token);
@@ -100,6 +103,9 @@ public sealed class PaymentEventService(IPaymentRepository repository,
 
             operation = "commit payment event transaction";
             await session.CommitAsync(token);
+            foreach (var item in investigations)
+                logger.LogWarning("Payment {PaymentId}, event {PaymentEventId} requires investigation after incoming event {IncomingPaymentEventId}: {Reason}",
+                    paymentId, item.PaymentEventId, eventId, item.ProcessingComment);
             logger.LogInformation("Processed payment {PaymentId}, event {PaymentEventId}; state {PaymentState}",
                 paymentId, eventId, payment?.State);
             return payment;

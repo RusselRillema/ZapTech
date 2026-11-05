@@ -103,7 +103,7 @@ With `ACME_ENABLE_CONTROLS=true`, the following demo controls require the same b
 
 | Control | Behaviour |
 | --- | --- |
-| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate a full-amount event using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. |
+| `POST /__stub/transactions/{id}/reversal` or `/refund` | Generate one full-amount event per type using `{"Amount":1999}`; queue it unless this transaction holds callbacks. Returns its `transactionUUID`. Both types may be generated for one payment; RTTQ retains reversal precedence. |
 | `GET /__stub/transactions/{id}/callbacks` | List generated callback `identifier`, `kind` and `isHeld`; reading does not send anything. |
 | `GET /__stub/transactions/{id}` | Observe accepted/replayed submission count, configured reply delay and whether a delayed reply was interrupted. |
 | `POST /__stub/transactions/{id}/callbacks/{identifier}/send` | Queue a held callback or replay one using its original bytes and identity; returns 202, or 503 if the queue is full. |
@@ -122,21 +122,32 @@ docker compose run --rm --no-deps -T demo --list
 docker compose run --rm --no-deps -T demo approval
 ```
 
-The six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Reversal/refund demonstrations are not included in this runner yet.
+The default six scenarios are `approval`, `decline`, `duplicate-submission`, `duplicate-notification`, `out-of-order` and `timeout`. The runner uses HTTP APIs only and prints actual service responses, payment identifiers and acknowledged callback counts. Exit codes are 0 for pass, 1 for a failed scenario/setup and 2 for invalid arguments. Six adjustment scenarios are opt-in.
 
 Use a dedicated demo stack and run scenarios sequentially. Each run creates a new app payment identifier using the existing seeded customer/card/sub-merchant from the submission example, retains those payments for audit, and restores the previous stub scenario settings. To use other existing catalogue records, set `DEMO_CUSTOMER_ID`, `DEMO_CUSTOMER_CARD_ID` and `DEMO_SUB_MERCHANT_ID`; `DEMO_AMOUNT` and `DEMO_CURRENCY_CODE` default to 1999 and ZAR. No data or schemas are created by the runner.
 
-`out-of-order` delivers Payment Advice before the delayed submission response, observes an Unresolved payment without an authoritative approved amount, and waits for the response to reconcile it. `timeout` verifies Acme observed its delayed reply being interrupted, then checks the service recovered approval before any advice was released. This exercises submission-time RTTQ recovery. Ordering between reversal/refund notifications remains outside this runner's coverage.
+`out-of-order` delivers Payment Advice before the delayed submission response, observes an Unresolved payment without an authoritative approved amount, and waits for the response to reconcile it. `timeout` verifies Acme observed its delayed reply being interrupted, then checks the service recovered approval before any advice was released. This exercises submission-time RTTQ recovery.
 
 For native execution, use `dotnet run --project Source/PaymentIntegration.Demo -- approval` from the repository root. It loads optional `.env` values, requires `ACME_API_KEY`, and defaults to host ports 5080/5081. Override `DEMO_PAYMENT_BASE_URL` and `DEMO_ACME_BASE_URL` for different host ports. The Compose runner uses internal service DNS automatically and needs no host .NET SDK.
 
-To build the runner, start/wait for the full Docker stack and run all six supported scenarios sequentially:
+To build the runner, start/wait for the full Docker stack and run the six default scenarios sequentially:
 
 ```text
 bash Scripts/run-demos.sh
 ```
 
 The script requires Bash and Docker Compose, reads the configured root `.env`, obtains its scenario list from the console, and stops with a nonzero exit status on the first failure. Use `bash Scripts/run-demos.sh approval timeout` for selected scenarios, `--list` to list them or `--help` for setup options. `DEMO_ENV_FILE` selects another environment file; `COMPOSE_PROJECT_NAME` selects another dedicated stack. Existing containers and database audit data are retained; the script never resets a database or removes volumes. The two delayed scenarios take about 50 seconds together, in addition to build/startup time.
+
+The opt-in adjustment suite adds `reversal`, `refund`, `reversal-before-approval`, `refund-before-approval`, `refund-then-reversal` and `reversal-then-refund`. These check full outcomes, exact callback replays, late approval Advice preserving adjusted value, early adjustments and Advice remaining unresolved until AuthAmount arrives, and full reversal precedence in both delivery orders. All notifications are generated and signed by the stub. Run with:
+
+```text
+bash Scripts/run-demos.sh --include-adjustments
+docker compose run --rm --no-deps -T demo --list-adjustments
+```
+
+The callback implementation from [PR #29](https://github.com/RusselRillema/ZapTech/pull/29) is included. The `adjustment-compose` CI job ensures its published commit is present, then runs the real deployment SQL and all twelve scenarios. The ordinary Compose job retains the original six scenarios; manual input `include_adjustments` also enables the adjustment suite.
+
+Capability limits: partial refunds/reversals return 501 in the stub controls; multiple distinct refunds, cutoff ordering and partial-reversal rejection by the application therefore remain untested here. Callback acknowledgements and current state are observed, but internal audit classifications have no read API. There is also no supported API to inject an additional bank response after an adjustment is already applied; early-response reconsideration and late Advice are covered instead.
 
 ## Tests and verification
 
@@ -150,4 +161,4 @@ Or run the same suite in a temporary SDK container, without a local .NET install
 docker run --rm --mount type=bind,source=.,target=/src,readonly --workdir /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test ZenTech.sln --configuration Release --artifacts-path /tmp/test-artifacts --results-directory /tmp/test-results
 ```
 
-The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. Transaction Status service tests cover adjustment calculations and delivery ordering without a database. Compose CI separately runs the same scenario script against PostgreSQL initialized by the real deployment SQL. This covers the six demonstrated HTTP flows; concurrency under multiple service instances, database failure handling and reversal/refund end-to-end paths remain outside that coverage. See [SOLUTION.md](SOLUTION.md) for verification limits.
+The payment service tests mock the DAL and Acme client; HTTP client tests use an in-memory handler. Stub tests exercise its HTTP API and actual callback deliveries; a controlled clock avoids waiting through simulated response delays. Transaction Status service tests cover adjustment calculations and delivery ordering without a database. Compose CI separately runs the original six scenarios and the full twelve-scenario suite against PostgreSQL initialized by the real deployment SQL. Concurrency under multiple service instances and database failure handling remain outside that coverage. See [SOLUTION.md](SOLUTION.md) for verification limits.

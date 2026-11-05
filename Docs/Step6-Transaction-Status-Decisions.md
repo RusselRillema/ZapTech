@@ -1,6 +1,6 @@
 # Step 6 Transaction Status decisions for review
 
-The Transaction Status callback handles Acme Switch reversals and refunds through the shared payment event transaction. The user confirmed the lifecycle states, reversal precedence, rejection of partial reversals and refund limit handling. The remaining choices fill unspecified cases and are implemented defaults for review.
+The Transaction Status callback handles Acme Switch reversals and refunds through the shared payment event transaction. The user confirmed the lifecycle states, reversal precedence, rejection of partial reversals and refund limit handling. [Issue #34](https://github.com/RusselRillema/ZapTech/issues/34) is the authoritative decision for conflicting duplicate webhooks and supersedes the former conflict-precedence default. The remaining choices fill unspecified cases and are implemented defaults for review.
 
 ## Requirements carried forward
 
@@ -8,7 +8,7 @@ The [assignment](Zapper%20-%20Team_Lead%20Assignment.pdf), especially Appendix A
 
 ## Confirmed rules and implementation defaults
 
-| Case | Implemented decision | Basis |
+| Case | Decision | Basis |
 | --- | --- | --- |
 | Payment state after an adjustment | Use `PartiallyRefunded`, `Refunded` or `Reversed`; retain `ApprovedAmount` and update `RemainingAmount`. | User confirmed these states. |
 | Reversal amount | Support a full reversal equal to the authoritative approved amount. Record a partial reversal as Ignored with an explanation. Acknowledge the recorded receipt with 200, without applying the adjustment. | User rejected partial reversals; acknowledgement follows Acme's callback contract. |
@@ -19,19 +19,21 @@ The [assignment](Zapper%20-%20Team_Lead%20Assignment.pdf), especially Appendix A
 | Collectively excessive refunds | Ignore the first refund that would exceed the remaining value and every refund after it in switch order. Retain the amount from the accepted refund sequence. An over-limit refund remains a barrier to later refunds even if a smaller later refund would fit. | User confirmed that refunds are processed until the amount would be exceeded, then ignored. |
 | Unknown RRN | Commit an unlinked Pending receipt with `UnknownPayment`, then acknowledge it. | Matches the existing Payment Advice audit approach. Automatic linking remains separate reconciliation work. |
 | Switch outcome | Apply only when `txResultCode=00` and `isApproved=true`. Both indicators negative means Ignored. Conflicting indicators mean Pending. | Both fields describe whether the switch applied the event. |
-| Reused event identifier with changed business fields | Keep the receipts, leave the affected adjustment history Pending, and return the payment to its confirmed approval with an unknown remaining value. Existing Ignored receipts remain terminal. | Chosen default: contradictory versions of one adjustment require investigation before its financial effect can be established. |
+| Reused event identifier with changed business fields | Retain the conflicting delivery as a separate Pending audit receipt with a conflict explanation and log it for investigation. Preserve the payment's established State, ApprovedAmount and RemainingAmount, and all previously Applied or Ignored receipts. Do not apply the conflicting delivery as a new financial event. | User-confirmed rule in [Issue #34](https://github.com/RusselRillema/ZapTech/issues/34); supersedes the former conflict-precedence default. |
 | Currency or RRN mismatch | Ignore the receipt without changing the payment's value. | Currency matching is required; mismatched references cannot adjust this payment. |
 | Zero or negative amount | Keep an Ignored audit receipt. | These notifications do not describe a positive refund or reversal. |
 
 An exact replay has the same event identifier, type, timestamp, amount and outcome indicators. JSON whitespace, property order and additional unknown fields do not create a new adjustment. Identifiers are compared as case-sensitive strings. A missing or null currency uses the specification's ZAR default; an explicit currency must match the payment.
 
-Identity and outcome conflicts take precedence over ordinary classifications: the adjustment history remains Pending, the payment retains its confirmed approval as `State=Approved`, and its remaining value becomes unknown. Existing Ignored receipts remain terminal. Currency and RRN mismatches are excluded from that history so they cannot change the balance.
+A conflicting duplicate cannot invalidate an established financial effect. For example, after an approved amount of 1250, a refund of 500 followed by a conflicting delivery of 400 under the same UUID retains the remaining value of 750. Reversing those deliveries retains 850. Each conflicting delivery remains Pending with an explanatory comment and a warning identifying the payment and incoming receipt. Previously Applied and Ignored receipts remain unchanged. When an identity has only conflicting Pending receipts, none of those deliveries can establish an adjustment when approval later arrives.
+
+Delivery-order independence applies to normal valid adjustment histories and exact replays. It does not require conflicting duplicates to converge to the same balance: the preserve-established-state policy retains the financial effect established before the conflict and flags the conflicting delivery for investigation. Currency and RRN mismatches remain excluded from adjustment calculations. A receipt with conflicting switch outcome indicators remains Pending for investigation.
 
 In plain terms, an unknown RRN is a notification whose payment reference cannot be found locally. A negative switch outcome means Acme says the refund or reversal failed. A contradiction means, for example, one field says success while another says failure, or the same event identifier describes a refund of 500 in one delivery and 600 in another. Unknown references are retained for investigation; confirmed failures have no financial effect; contradictions remain visible as unreconciled events.
 
 Before approval or before authoritative `AuthAmount` is known, a successful adjustment remains Pending. A successful adjustment against a Declined or Failed payment is Ignored. Later payment responses and Payment Advice must preserve an already-adjusted remaining value.
 
-The payment is a current interpretation of retained receipts. An Applied adjustment may become Pending when a later delivery exposes contradictory history, or Ignored when an earlier switch event changes the accepted refund sequence or a full reversal supersedes it. Ignored receipts are never reapplied. Same-identity replays retain a single representative receipt; all deliveries remain in the audit history.
+The payment is a current interpretation of retained receipts. An Applied adjustment may become Ignored when a valid earlier switch event changes the accepted refund sequence or a full reversal supersedes it. A conflicting duplicate cannot demote a previously Applied receipt or change an Ignored receipt. Ignored receipts are never reapplied. Exact same-identity replays retain a single representative receipt; all deliveries remain in the audit history.
 
 ## Callback and persistence behaviour
 
