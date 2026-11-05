@@ -2,11 +2,11 @@ using System.Text.Json;
 
 namespace PaymentIntegration.Payments;
 
-public sealed class PaymentResponseProcessor
+public sealed class PaymentResponseProcessor(TransactionStatusProcessor statusProcessor)
 {
     public (Payment Payment, PaymentEvent Event) Process(Payment payment, PaymentEvent receipt,
         DateTimeOffset processedAt,
-        bool retryingRateLimit = false)
+        bool retryingRateLimit = false, IReadOnlyList<PaymentEvent>? statusHistory = null)
     {
         if (receipt.Source == "PaymentAdvice")
             return ProcessAdvice(payment, receipt, processedAt);
@@ -93,10 +93,9 @@ public sealed class PaymentResponseProcessor
                 : LeavePending(payment, receipt, "Acme is still processing the payment; outcome remains unknown.");
         }
 
-        if (receipt.Source == "TransactionQuery" && Text(response, "TransactionStatus") is ("Reversed" or "Refunded"))
+        if (IsAdjustedQuery(receipt))
         {
-            // RTTQ is a snapshot, not the adjustment history needed to calculate remaining value.
-            return LeavePending(payment, receipt, "Query reports a later lifecycle state requiring reconciliation.");
+            return ProcessAdjustedQuery(payment, receipt, response, detail, statusHistory ?? [], processedAt);
         }
 
         // TransactionStatus describes gateway processing. The acquirer code decides the outcome.
@@ -143,6 +142,50 @@ public sealed class PaymentResponseProcessor
             },
             receipt,
             processedAt);
+    }
+
+    internal static bool IsAdjustedQuery(PaymentEvent receipt) =>
+        receipt.Source == "TransactionQuery"
+        && receipt.Payload is { ValueKind: JsonValueKind.Object } payload
+        && payload.TryGetProperty("PaymentResponse", out var response)
+        && response.ValueKind == JsonValueKind.Object
+        && Text(response, "TransactionStatus") is ("Reversed" or "Refunded");
+
+    private (Payment Payment, PaymentEvent Event) ProcessAdjustedQuery(Payment payment, PaymentEvent receipt,
+        JsonElement response, JsonElement detail, IReadOnlyList<PaymentEvent> history, DateTimeOffset processedAt)
+    {
+        if (Text(detail, "Code") != "00")
+            return LeavePending(payment, receipt,
+                "Adjusted query conflicts with its acquirer outcome; investigation is required.");
+
+        if (!response.TryGetProperty("AuthAmount", out var authorised)
+            || authorised.ValueKind != JsonValueKind.Number || !authorised.TryGetInt64(out var amount) || amount < 0)
+            return LeavePending(payment, receipt,
+                "Adjusted query has no valid AuthAmount; approved value remains unknown.");
+
+        if (payment.State is "Declined" or "Failed"
+            || payment.HasApproval && payment.ApprovedAmount != amount)
+            return LeavePending(payment, receipt,
+                "Adjusted query conflicts with the established bank outcome; investigation is required.");
+
+        // Interpret the recorded history against the authoritative amount without
+        // adopting a provisional approval or balance when the evidence is incomplete.
+        var result = statusProcessor.Process(payment with
+        {
+            State = "Approved", ApprovedAmount = amount, RemainingAmount = amount
+        }, history, processedAt);
+        var state = Text(response, "TransactionStatus");
+        if (result.HasConflictingEvidence
+            || result.Payment.State is "Reversed" or "Refunded" && result.Payment.State != state)
+            return LeavePending(payment, receipt,
+                "Adjusted query conflicts with recorded adjustment history; investigation is required.");
+
+        if (result.Payment.State != state || result.Payment.RemainingAmount != 0
+            || result.Events.Any(item => item.ProcessingState == "Pending"))
+            return LeavePending(payment, receipt,
+                "Adjusted query requires complete matching adjustment history; remaining value is unknown.");
+
+        return Apply(result.Payment, receipt, processedAt);
     }
 
     public PaymentEvent ProcessUnlinkedAdvice(PaymentEvent receipt, DateTimeOffset processedAt)
@@ -241,7 +284,7 @@ public sealed class PaymentResponseProcessor
         });
     }
 
-    private string? Text(JsonElement value, string name) =>
+    private static string? Text(JsonElement value, string name) =>
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString() : null;
 

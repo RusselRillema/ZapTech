@@ -7,7 +7,7 @@ public sealed class TransactionStatusProcessor
     private sealed record Adjustment(PaymentEvent Receipt, string Identifier, string Type,
         string Timestamp, long Amount, string Code, bool Approved);
 
-    public (Payment Payment, IReadOnlyList<PaymentEvent> Events) Process(
+    public (Payment Payment, IReadOnlyList<PaymentEvent> Events, bool HasConflictingEvidence) Process(
         Payment payment, IReadOnlyList<PaymentEvent> history, DateTimeOffset processedAt)
     {
         var events = history.ToDictionary(item => item.PaymentEventId);
@@ -59,7 +59,7 @@ public sealed class TransactionStatusProcessor
                     ? "Acme event identifier has conflicting details; reconciliation is required."
                     : "Switch outcome indicators conflict; reconciliation is required.");
             return (payment.HasApproval ? payment with { State = "Approved", RemainingAmount = null } : payment,
-                events.Values.ToArray());
+                events.Values.ToArray(), true);
         }
 
         var candidates = new List<Adjustment>();
@@ -88,7 +88,7 @@ public sealed class TransactionStatusProcessor
         }
 
         if (candidates.Count == 0)
-            return (payment, events.Values.ToArray());
+            return (payment, events.Values.ToArray(), false);
 
         // Reconstruct the current value from the complete adjustment history. Never
         // subtract a replay from the already-reduced persisted balance.
@@ -102,7 +102,7 @@ public sealed class TransactionStatusProcessor
                 Set(item.Receipt, item == reversal ? "Applied" : "Ignored", item == reversal ? null
                     : "A full reversal already accounts for the approved value.");
             }
-            return (payment with { State = "Reversed", RemainingAmount = 0 }, events.Values.ToArray());
+            return (payment with { State = "Reversed", RemainingAmount = 0 }, events.Values.ToArray(), false);
         }
 
         var total = 0L;
@@ -127,7 +127,7 @@ public sealed class TransactionStatusProcessor
 
         var state = total == 0 ? "Approved" : total == payment.ApprovedAmount ? "Refunded" : "PartiallyRefunded";
         return (payment with { State = state, RemainingAmount = payment.ApprovedAmount - total },
-            events.Values.ToArray());
+            events.Values.ToArray(), ignoringRefunds);
     }
 
     private static PaymentEvent Classify(PaymentEvent receipt, string state, string? comment, DateTimeOffset processedAt)
