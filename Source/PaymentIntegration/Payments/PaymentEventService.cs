@@ -1,7 +1,7 @@
 namespace PaymentIntegration.Payments;
 
 public sealed class PaymentEventService(IPaymentRepository repository,
-    PaymentResponseProcessor processor, TransactionStatusProcessor statusProcessor,
+    PaymentResponseProcessor processor, PaymentEventProcessor eventProcessor,
     TimeProvider clock, ILogger<PaymentEventService> logger)
 {
     public Task<Payment?> ProcessAsync(Guid? paymentId, Guid eventId,
@@ -57,40 +57,12 @@ public sealed class PaymentEventService(IPaymentRepository repository,
                     operation = "read transaction status history";
                     statusHistory = await session.GetTransactionStatusEventsAsync(token);
                 }
-                bool applied;
-                do
-                {
-                    applied = false;
-                    for (var index = 0; index < pending.Length; index++)
-                    {
-                        if (pending[index].ProcessingState != "Pending" || pending[index].Source == "TransactionStatus")
-                            continue;
-
-                        operation = "process payment event";
-                        // Earlier E29 receipts await the current attempt's outcome.
-                        var deferRateLimitFailure = pending[index].PaymentEventId != eventId || retryingRateLimit;
-                        var result = processor.Process(payment, pending[index], clock.GetUtcNow(), deferRateLimitFailure, statusHistory);
-                        payment = result.Payment;
-                        pending[index] = result.Event;
-                        applied |= result.Event.ProcessingState == "Applied";
-                    }
-
-                    if (statusHistory.Count > 0)
-                    {
-                        operation = "process transaction status history";
-                        var previous = statusHistory.ToDictionary(item => item.PaymentEventId);
-                        var result = statusProcessor.Process(payment, statusHistory, clock.GetUtcNow());
-                        payment = result.Payment;
-                        statusHistory = result.Events;
-                        applied |= statusHistory.Any(item => item.ProcessingState == "Applied"
-                            && previous[item.PaymentEventId].ProcessingState != "Applied");
-                    }
-                } while (applied);
-
-                var updatedEvents = pending.Where(item => item.Source != "TransactionStatus").Concat(statusHistory).ToArray();
+                operation = "process payment event batch";
+                var result = eventProcessor.Process(payment, pending, statusHistory, eventId, retryingRateLimit, clock.GetUtcNow());
+                payment = result.Payment;
+                var updatedEvents = result.Events;
                 investigations = updatedEvents.Where(item => item.ProcessingState == "Pending"
                     && item.ProcessingComment?.Contains("investigation", StringComparison.OrdinalIgnoreCase) == true).ToArray();
-                payment = payment with { HasPendingEvents = updatedEvents.Any(item => item.ProcessingState == "Pending") };
                 operation = "save payment";
                 await session.SavePaymentAsync(payment, token);
                 // Release any previous applied identity before saving its replacement.

@@ -25,6 +25,8 @@ public sealed record PaymentEvent(Guid PaymentEventId, Guid? PaymentId, string S
     string ProcessingState = "Pending", string? ProcessingComment = null,
     DateTimeOffset? ProcessedAt = null);
 
+public sealed record PaymentProcessingResult(Payment Payment, IReadOnlyList<PaymentEvent> Events);
+
 public sealed record PaymentResult(Guid PaymentId, string AppPaymentId, string State,
     string CurrencyCode, long RequestedAmount, long? ApprovedAmount, long? RemainingAmount,
     bool IsFullyReconciled)
