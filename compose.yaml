@@ -86,7 +86,7 @@ services:
         source: paymentintegration_data
         target: /var/lib/postgresql
       - type: bind
-        source: ./Source/PaymentIntegration/Database
+        source: ./Source/PaymentIntegration/Database/Sql
         target: /opt/paymentintegration/database
         read_only: true
         bind:
@@ -100,7 +100,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        # Fixed development credentials from Database/setup.sql.
+        # Fixed development credentials from Database/Sql/setup.sql.
         - >-
           PGPASSWORD=payment_integration_dev_only PGCONNECT_TIMEOUT=3
           psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432

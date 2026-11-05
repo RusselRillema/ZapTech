@@ -74,7 +74,7 @@ Edit `.env`: replace the example Acme credentials. The database connection strin
 Create the database **once**, using your PostgreSQL administrator account (replace `postgres` if needed). This creates the schema, procedures and sample customers/cards/merchants:
 
 ```text
-psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/setup.sql
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/Sql/setup.sql
 ```
 
 Start Acme in one terminal:
@@ -94,7 +94,7 @@ Stop each application with **Ctrl+C** in its terminal; the database persists. Re
 To **delete the application database and login**, stop the apps, disconnect other clients from `payment_integration`, and run as the same PostgreSQL administrator used for setup:
 
 ```text
-psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/remove.sql
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f Source/PaymentIntegration/Database/Sql/remove.sql
 ```
 
 The PostgreSQL server and other databases remain.
@@ -112,7 +112,7 @@ Both should return `{"status":"healthy"}`. These are liveness checks; use the ap
 
 Both native apps load `.env`; existing shell variables take precedence in both modes. Use the matching environment template when switching modes: native URLs use the host, Docker URLs use service names. Keep `.env` private. The development database login is `payment_integration_app`, password `payment_integration_dev_only`, database `payment_integration`.
 
-Database setup only supports a fresh database/login and Docker only initializes empty storage. Existing databases need explicit schema deployment; restarting does not upgrade or repair them. Setup/removal details: [database scripts](Source/PaymentIntegration/Database/).
+Database setup only supports a fresh database/login and Docker only initializes empty storage. Existing databases need explicit schema deployment; restarting does not upgrade or repair them. Setup/removal details: [database scripts](Source/PaymentIntegration/Database/Sql/).
 
 ## Demos and tests
 

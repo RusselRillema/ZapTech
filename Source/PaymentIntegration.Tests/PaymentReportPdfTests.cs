@@ -16,7 +16,7 @@ public sealed class PaymentReportPdfTests
             var payment = ReportTestData.Payment() with { SubMerchantId = $"merchant-{index}" };
             return new PaymentReportHistory(payment, $"Merchant {index}", [ReportTestData.Outcome(payment)]);
         }).ToArray();
-        var (service, _) = PaymentReportServiceTests.Service(histories);
+        var (service, _) = ReportTestData.CreateService(histories);
         var report = await service.GetDailyAsync(new(2026, 11, 4), CancellationToken.None);
 
         using var pdf = PdfDocument.Open(new PaymentReportPdfRenderer().Render(report));
@@ -55,7 +55,7 @@ public sealed class PaymentReportPdfTests
                 transactionAmount = 30000, currencyCode = "ZAR", txResultCode = "00", isApproved = false
             })
         };
-        var (service, _) = PaymentReportServiceTests.Service([
+        var (service, _) = ReportTestData.CreateService([
             new(payment, "Merchant A", [ReportTestData.Outcome(payment), conflict])
         ]);
         var report = await service.GetDailyAsync(new(2026, 11, 5), CancellationToken.None);

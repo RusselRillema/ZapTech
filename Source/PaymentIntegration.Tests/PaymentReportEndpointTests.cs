@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
-using PaymentIntegration.Acme;
+using PaymentIntegration.Acme.Client;
 using PaymentIntegration.Payments;
 using PaymentIntegration.Reports;
 using UglyToad.PdfPig;

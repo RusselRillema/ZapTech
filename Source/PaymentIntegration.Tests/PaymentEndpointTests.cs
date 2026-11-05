@@ -8,7 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using PaymentIntegration.Acme;
+using PaymentIntegration.Acme.Client;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
 using Xunit;
 
 namespace PaymentIntegration.Tests;

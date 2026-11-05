@@ -1,8 +1,12 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using PaymentIntegration.Acme;
+using PaymentIntegration.Acme.Client;
+using PaymentIntegration.Acme.Contracts;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Payments.Models;
+using PaymentIntegration.Payments.Processing;
+using PaymentIntegration.Payments.Services;
 using Xunit;
 
 namespace PaymentIntegration.Tests;
