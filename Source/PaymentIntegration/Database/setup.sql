@@ -42,6 +42,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE :"deployment_owner"
 \ir 001_CreateTables.sql
 \ir 002_SeedSampleData.sql
 \ir 003_PaymentProcedures.sql
+\ir 004_ReportingReads.sql
 
 GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO payment_integration_app;
 COMMIT;

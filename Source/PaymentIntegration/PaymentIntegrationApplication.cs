@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Npgsql;
 using PaymentIntegration.Acme;
 using PaymentIntegration.Payments;
+using PaymentIntegration.Reports;
 
 namespace PaymentIntegration;
 
@@ -26,6 +27,7 @@ public static class PaymentIntegrationApplication
             var dataSource = new NpgsqlDataSourceBuilder(connectionString);
             dataSource.ConnectionStringBuilder.IncludeErrorDetail = false;
             dataSource.MapComposite<PaymentEventRow>("public.payment_event_result");
+            dataSource.MapComposite<PaymentHistoryRow>("public.payment_history_result");
             return dataSource.Build();
         });
         builder.Services.AddSingleton(_ => new ConcurrencyLimiter(new ConcurrencyLimiterOptions
@@ -41,6 +43,10 @@ public static class PaymentIntegrationApplication
                 AllowAutoRedirect = false
             });
         builder.Services.AddSingleton<IPaymentRepository, PaymentRepository>();
+        builder.Services.AddSingleton<IPaymentReportRepository, PaymentReportRepository>();
+        builder.Services.AddScoped<PaymentHistoryReconstructor>();
+        builder.Services.AddScoped<PaymentReportService>();
+        builder.Services.AddSingleton<PaymentReportPdfRenderer>();
         builder.Services.AddSingleton<FnbCardAcceptorNameFormatter>();
         builder.Services.AddSingleton<CardAcceptorNameFormatterFactory>();
         builder.Services.AddSingleton<AcmeRequestFactory>();
@@ -64,6 +70,7 @@ public static class PaymentIntegrationApplication
                 detail: "Retry using the same AppPaymentId.").ExecuteAsync(context);
         }));
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+        app.MapPaymentReports();
         app.MapGet("/payments", async (string appPaymentId, PaymentStatusService service, CancellationToken cancellationToken) =>
         {
             try
