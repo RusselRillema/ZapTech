@@ -63,7 +63,7 @@
 - Partial reversals are rejected: record them as **Ignored** with a reason. A full reversal must equal the authoritative approved amount and supersedes refunds, including refunds already applied.
 
 - Multiple refunds may be applied as long as their combined value does not exceed the remaining refundable value.
-- Process refunds until the next refund would exceed the remaining value, then ignore that refund and all subsequent refunds. Use the switch transaction timestamp, then the ordinal switch event identifier, to define a stable order independent of delivery order. This ordering is an implementation default recorded in [step 6 decisions](Step6-Transaction-Status-Decisions.md).
+- Process refunds until the next refund would exceed the remaining value, then ignore that refund and all subsequent refunds. Use the switch transaction timestamp, then the ordinal switch event identifier, to define a stable order independent of delivery order. This ordering is an implementation default.
 - Derive the current adjustment state and remaining value from the complete event history. A late event can change which earlier Applied events belong to the accepted refund sequence. Ignored events are never reapplied.
 
 - The payment record represents the current interpreted state of the payment. Payment events remain the audit history showing how that state was reached.

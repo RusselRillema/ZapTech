@@ -1,5 +1,9 @@
 # Solution
 
+**Video walkthrough:** [Watch on YouTube](https://youtu.be/q7kO6svREB8).
+
+Please select a higher playback resolution in YouTube's video settings for clearer text. YouTube sometimes selects a lower resolution automatically.
+
 ## 1. Architecture and Design Decisions
 
 The solution consists of three main components: the .NET 8 Payment Integration service, a PostgreSQL database and a simulated Acme Pay gateway. I've also included a small console application to demonstrate the payment scenarios.
