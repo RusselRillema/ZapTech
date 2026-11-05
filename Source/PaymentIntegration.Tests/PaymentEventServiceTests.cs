@@ -380,6 +380,7 @@ public sealed class PaymentEventServiceTests
         Assert.Null(query.ProcessedAt);
         Assert.Contains("investigation", query.ProcessingComment, StringComparison.OrdinalIgnoreCase);
         AssertConflictWarning(flow, query);
+        AssertConflictWarning(flow, flow.Receipts[^1]);
     }
 
     [Theory]
@@ -440,6 +441,7 @@ public sealed class PaymentEventServiceTests
     private static void AssertConflictWarning(PaymentEventServiceTestContext flow, PaymentEvent receipt) =>
         flow.Logger.Verify(logger => logger.Log(LogLevel.Warning, It.IsAny<EventId>(),
             It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(PaymentId.ToString())
-                && state.ToString()!.Contains(receipt.PaymentEventId.ToString())),
+                && state.ToString()!.Contains(receipt.PaymentEventId.ToString())
+                && state.ToString()!.Contains("investigation", StringComparison.OrdinalIgnoreCase)),
             It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.AtLeastOnce);
 }
