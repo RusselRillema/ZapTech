@@ -55,7 +55,7 @@ public sealed class PaymentReportEndpointTests
         Assert.Contains("Merchant A", text);
         Assert.Contains("R1,000.00", text);
         Assert.Contains("Pending approval value", text);
-        Assert.Contains("Yes", text);
+        Assert.Contains("YES", text);
         Assert.DoesNotContain("R300.00", text);
         Assert.DoesNotContain("R700.00", text);
         repository.Verify(value => value.GetHistoryAsync(DateTimeOffset.Parse("2026-11-03T22:00:00Z"),
