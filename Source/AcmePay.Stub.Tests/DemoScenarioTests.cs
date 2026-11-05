@@ -35,6 +35,9 @@ public sealed class DemoScenarioTests
         using var replayed = await host.SubmitAsync();
         using var replay = JsonDocument.Parse(await replayed.Content.ReadAsByteArrayAsync());
         Assert.Equal(declined.GetRawText(), replay.RootElement.GetProperty("PaymentResponse").GetRawText());
+        using var observed = await host.Client.GetAsync("/__stub/transactions/attempt-1");
+        using var observation = JsonDocument.Parse(await observed.Content.ReadAsByteArrayAsync());
+        Assert.Equal(2, observation.RootElement.GetProperty("submissionCount").GetInt32());
         using var queried = await host.QueryAsync();
         using var query = JsonDocument.Parse(await queried.Content.ReadAsByteArrayAsync());
         Assert.Equal(declined.GetRawText(), query.RootElement.GetProperty("PaymentResponse").GetRawText());
@@ -160,6 +163,15 @@ public sealed class DemoScenarioTests
 
         caller.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => { using var response = await submission; });
+        using var observationDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            using var observed = await host.Client.GetAsync("/__stub/transactions/attempt-1", observationDeadline.Token);
+            using var observation = JsonDocument.Parse(await observed.Content.ReadAsByteArrayAsync(observationDeadline.Token));
+            if (observation.RootElement.GetProperty("responseInterrupted").GetBoolean())
+                break;
+            await Task.Delay(20, observationDeadline.Token);
+        }
         using var repeated = await host.SubmitAsync();
         Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
         using var replay = JsonDocument.Parse(await repeated.Content.ReadAsByteArrayAsync());
@@ -193,8 +205,50 @@ public sealed class DemoScenarioTests
 
     private static async Task<CapturedCallback> SendAsync(StubHost host, string identifier)
     {
+        using var beforeResponse = await host.Client.GetAsync("/__stub/transactions/attempt-1/callbacks");
+        using var before = JsonDocument.Parse(await beforeResponse.Content.ReadAsByteArrayAsync());
+        var acknowledgements = before.RootElement.EnumerateArray()
+            .Single(item => item.GetProperty("identifier").GetString() == identifier).GetProperty("acknowledgements").GetInt32();
         using var sent = await host.Client.PostAsync($"/__stub/transactions/attempt-1/callbacks/{identifier}/send", null);
         Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
-        return await host.NextCallbackAsync();
+        var delivered = await host.NextCallbackAsync();
+        var progress = await WaitForAcknowledgementAsync(host, identifier, acknowledgements + 1);
+        Assert.Equal(200, progress.GetProperty("lastHttpStatusCode").GetInt32());
+        return delivered;
+    }
+
+    [Fact]
+    public async Task Callback_statistics_distinguish_failed_deliveries_from_a_successful_acknowledgement()
+    {
+        await using var host = await StubHost.StartAsync();
+        using var configured = await host.Client.PostAsJsonAsync("/__stub/scenario", new { holdCallbacks = true });
+        Assert.Equal(HttpStatusCode.NoContent, configured.StatusCode);
+        using var submitted = await host.SubmitAsync();
+        Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+        foreach (var status in new[] { 503, 204, 500, 200 })
+            host.CallbackResponses.Enqueue(status);
+        using var sent = await host.Client.PostAsync("/__stub/transactions/attempt-1/callbacks/attempt-1/send", null);
+        Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
+        for (var attempt = 0; attempt < 4; attempt++)
+            await host.NextCallbackAsync();
+        var progress = await WaitForAcknowledgementAsync(host, "attempt-1", 1);
+        Assert.Equal(4, progress.GetProperty("completedAttempts").GetInt32());
+        Assert.Equal(1, progress.GetProperty("acknowledgements").GetInt32());
+        Assert.Equal(200, progress.GetProperty("lastHttpStatusCode").GetInt32());
+    }
+
+    private static async Task<JsonElement> WaitForAcknowledgementAsync(StubHost host, string identifier, int minimum)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            using var response = await host.Client.GetAsync("/__stub/transactions/attempt-1/callbacks", deadline.Token);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(deadline.Token));
+            var callback = body.RootElement.EnumerateArray().Single(item => item.GetProperty("identifier").GetString() == identifier);
+            if (callback.GetProperty("acknowledgements").GetInt32() >= minimum)
+                return callback.Clone();
+            await Task.Delay(20, deadline.Token);
+        }
     }
 }

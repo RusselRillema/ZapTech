@@ -59,6 +59,8 @@ public static class StubApplication
             controls.AddEndpointFilter(new BearerFilter(settings, clock));
             controls.MapGet("/scenario", (DemoScenarioState scenarios) => Results.Ok(scenarios.Current));
             controls.MapPost("/scenario", ConfigureScenarioAsync);
+            controls.MapGet("/transactions/{transactionId}", (string transactionId, PaymentStore store) =>
+                store.GetObservation(transactionId));
             controls.MapPost("/transactions/{transactionId}/reversal", (string transactionId, HttpContext context, PaymentStore store) =>
                 SendStatusAsync(transactionId, "Reversal", context, store, clock));
             controls.MapPost("/transactions/{transactionId}/refund", (string transactionId, HttpContext context, PaymentStore store) =>

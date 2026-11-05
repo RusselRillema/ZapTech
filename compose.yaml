@@ -1,23 +1,75 @@
 services:
+  demo:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Source/PaymentIntegration.Demo/Dockerfile
+    environment:
+      DEMO_PAYMENT_BASE_URL: http://payments:8080
+      DEMO_ACME_BASE_URL: http://acme:8080
+      ACME_API_KEY: ${ACME_API_KEY:-}
+      DEMO_CUSTOMER_ID: ${DEMO_CUSTOMER_ID:-860e4537-28e4-4b83-a399-d4bd13f63a26}
+      DEMO_CUSTOMER_CARD_ID: ${DEMO_CUSTOMER_CARD_ID:-8ee3f008-84f5-4152-80a5-21821abdd045}
+      DEMO_SUB_MERCHANT_ID: ${DEMO_SUB_MERCHANT_ID:-ZAP9193145856}
+      DEMO_AMOUNT: ${DEMO_AMOUNT:-1999}
+      DEMO_CURRENCY_CODE: ${DEMO_CURRENCY_CODE:-ZAR}
+    depends_on:
+      payments:
+        condition: service_healthy
+
+  payments:
+    build:
+      context: .
+      dockerfile: Source/PaymentIntegration/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ACME_BASE_URL: ${ACME_BASE_URL:-http://acme:8080}
+      PAYMENT_DATABASE_CONNECTION_STRING: ${PAYMENT_DATABASE_CONNECTION_STRING:-Host=db;Port=5432;Database=payment_integration;Username=payment_integration_app;Password=payment_integration_dev_only}
+      ACME_API_KEY: ${ACME_API_KEY:-}
+      ACME_MERCHANT_ID: ${ACME_MERCHANT_ID:-}
+      ACME_ADVICE_USERNAME: ${ACME_ADVICE_USERNAME:-}
+      ACME_ADVICE_PASSWORD: ${ACME_ADVICE_PASSWORD:-}
+      ACME_WEBHOOK_SECRET: ${ACME_WEBHOOK_SECRET:-}
+    ports:
+      - "127.0.0.1:${PAYMENT_HTTP_PORT:-5080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      acme:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "dotnet", "PaymentIntegration.dll", "--health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 90s
+
   acme:
     build:
       context: .
       dockerfile: Source/AcmePay.Stub/Dockerfile
     environment:
-      ASPNETCORE_URLS: ${ASPNETCORE_URLS:-http://+:8080}
+      ASPNETCORE_URLS: http://+:8080
       # The running service validates its settings; unrelated services need none.
       ACME_API_KEY: ${ACME_API_KEY:-}
       ACME_MERCHANT_ID: ${ACME_MERCHANT_ID:-}
-      ACME_ADVICE_URL: ${ACME_ADVICE_URL:-}
+      ACME_ADVICE_URL: ${ACME_ADVICE_URL:-http://payments:8080/notifications/payment-advice}
       ACME_ADVICE_USERNAME: ${ACME_ADVICE_USERNAME:-}
       ACME_ADVICE_PASSWORD: ${ACME_ADVICE_PASSWORD:-}
-      ACME_STATUS_WEBHOOK_URL: ${ACME_STATUS_WEBHOOK_URL:-}
+      ACME_STATUS_WEBHOOK_URL: ${ACME_STATUS_WEBHOOK_URL:-http://payments:8080/notifications/transaction-status}
       ACME_WEBHOOK_SECRET: ${ACME_WEBHOOK_SECRET:-}
       ACME_ENABLE_CONTROLS: ${ACME_ENABLE_CONTROLS:-false}
     ports:
       - "127.0.0.1:${ACME_HTTP_PORT:-5081}:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "dotnet", "AcmePay.Stub.dll", "--health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     stop_grace_period: 30s
 
   db:
